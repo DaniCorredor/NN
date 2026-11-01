@@ -1,0 +1,2 @@
+# Los scripts de bash deben llegar al servidor con finales de línea de Linux
+*.sh text eol=lf

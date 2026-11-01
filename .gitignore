@@ -2,5 +2,6 @@
 datasets/
 checkpoints/
 resultados/
+logs/
 *.log
 __pycache__/
