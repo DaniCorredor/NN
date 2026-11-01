@@ -1,0 +1,6 @@
+# Se generan en el servidor: no se suben a GitHub
+datasets/
+checkpoints/
+resultados/
+*.log
+__pycache__/
