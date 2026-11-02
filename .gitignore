@@ -1,7 +1,11 @@
-# Se generan en el servidor: no se suben a GitHub
+# Pesados: se quedan solo en el servidor
 datasets/
-checkpoints/
-resultados/
-logs/
-*.log
+*.pth
+*.pt
+/*.log
 __pycache__/
+
+# Sí se suben (livianos, para revisarlos desde el PC):
+#   resultados/   -> imágenes, .npy, .txt, métricas de test
+#   checkpoints/  -> historial.csv, curvas y muestras_val (sin los .pth)
+#   logs/         -> logs de cada paso
