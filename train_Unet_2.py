@@ -13,67 +13,77 @@ matplotlib.use("Agg")  # servidor sin pantalla
 import matplotlib.pyplot as plt
 
 from Unet import RRDB_UNet_Deterministic
-from data_generator import PEDESTAL, limites_normalizacion
+from data_generator import (PEDESTAL, RATE_MAP_PATH, limites_normalizacion, agregar_ruido,
+                            normalizar_muones)
+
+# Peso extra de la pérdida en las columnas con hierro: la prioridad es reconstruir las barras
+PESO_BARRAS = 4.0
 
 # ==============================================================================
 # 1. DATASET Y NORMALIZACIÓN 
 # ==============================================================================
 class MuographyStaticDataset(Dataset):
-    def __init__(self, data_dir, files_list=None, is_train=False):
+    # Cada archivo guarda la varianza esperada sin ruido (x_limpio). El ruido se genera al cargar:
+    #   is_train=True   -> augmentation + ruido nuevo cada vez (la red no puede memorizarlo)
+    #   is_train=False  -> ruido con semilla fija por muestra (validación comparable entre épocas)
+    #   ruido_fijo=True -> usa la medición guardada en el archivo (conjunto de prueba)
+    def __init__(self, data_dir, files_list=None, is_train=False, ruido_fijo=False):
         if files_list is None:
             self.files = [os.path.join(data_dir, f) for f in os.listdir(data_dir) if f.endswith('.npz')]
         else:
             self.files = files_list
 
         self.is_train = is_train
+        self.ruido_fijo = ruido_fijo
+        self.rate_map = np.load(RATE_MAP_PATH).astype(np.float32)
 
         # Pedestal y límites de normalización compartidos con el generador y la inferencia
         self.PEDESTAL_MEAN = PEDESTAL
         self.MAX_VAR, self.MAX_DENSITY = limites_normalizacion()
-        
+
     def __len__(self):
         return len(self.files)
 
     def __getitem__(self, idx):
         data = np.load(self.files[idx])
-        
-        x_var = np.nan_to_num(data['x'], nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
-        y_var = np.nan_to_num(data['y'], nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
-        y_dens = np.nan_to_num(data['density'], nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
-        
+        mapas = [np.nan_to_num(data[k], nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
+                 for k in ('x_limpio', 'y', 'density', 'mascara')]
+
+        if self.ruido_fijo:
+            x_var, muones = data['x'].astype(np.float32), data['muones'].astype(np.float32)
+            _, y_var, y_dens, mascara = mapas
+        else:
+            # Transformaciones geométricas sobre la escena limpia, ANTES del ruido: el mapa de tasa
+            # de muones queda fijo en coordenadas del detector, como en la realidad
+            if self.is_train:
+                if np.random.rand() > 0.5:
+                    mapas = [np.flip(m, axis=1) for m in mapas]
+                if np.random.rand() > 0.5:
+                    mapas = [np.flip(m, axis=0) for m in mapas]
+                k_rot = np.random.randint(0, 4)
+                if k_rot > 0:
+                    mapas = [np.rot90(m, k_rot) for m in mapas]
+            x_limpio, y_var, y_dens, mascara = [np.ascontiguousarray(m) for m in mapas]
+            rng = np.random.default_rng() if self.is_train else np.random.default_rng(idx)
+            x_var, muones, _ = agregar_ruido(x_limpio, self.rate_map, rng)
+
         x_calibrada = np.clip(x_var - self.PEDESTAL_MEAN, 0.0, None)
         y_calibrada_var = np.clip(y_var - self.PEDESTAL_MEAN, 0.0, None)
         y_calibrada_dens = np.clip(y_dens, 0.0, None)
-        
+
         # Mapeo estricto al dominio [0, 1] para ambos cabezales
         norm_x = np.clip(x_calibrada / self.MAX_VAR, 0.0, 1.0).astype(np.float32)
         norm_y_var = np.clip(y_calibrada_var / self.MAX_VAR, 0.0, 1.0).astype(np.float32)
         norm_y_dens = np.clip(y_calibrada_dens / self.MAX_DENSITY, 0.0, 1.0).astype(np.float32)
-        
-        condition_x = torch.from_numpy(norm_x).float().unsqueeze(0)
+
+        # Entrada de 2 canales: varianza medida y muones por píxel (dice a la red qué tan confiable es cada píxel)
+        condition_x = torch.from_numpy(np.stack([norm_x, normalizar_muones(muones)])).float()
         target_y_var = torch.from_numpy(norm_y_var).float().unsqueeze(0)
         target_y_dens = torch.from_numpy(norm_y_dens).float().unsqueeze(0)
+        peso = torch.from_numpy(1.0 + PESO_BARRAS * mascara).float().unsqueeze(0)
         # 112x112 ya es divisible por 8: sin padding
 
-        # Transformaciones geométricas idénticas para los tres tensores: DATA AUGMENTATION
-        if self.is_train:
-            if torch.rand(1).item() > 0.5:
-                condition_x = torch.flip(condition_x, dims=[2]) 
-                target_y_var = torch.flip(target_y_var, dims=[2])
-                target_y_dens = torch.flip(target_y_dens, dims=[2])
-                
-            if torch.rand(1).item() > 0.5:
-                condition_x = torch.flip(condition_x, dims=[1])
-                target_y_var = torch.flip(target_y_var, dims=[1])
-                target_y_dens = torch.flip(target_y_dens, dims=[1])
-                
-            k_rot = torch.randint(0, 4, (1,)).item()
-            if k_rot > 0:
-                condition_x = torch.rot90(condition_x, k_rot, dims=[1, 2])
-                target_y_var = torch.rot90(target_y_var, k_rot, dims=[1, 2])
-                target_y_dens = torch.rot90(target_y_dens, k_rot, dims=[1, 2])
-                
-        return condition_x, target_y_var, target_y_dens
+        return condition_x, target_y_var, target_y_dens, peso
 class HybridGradientLoss(nn.Module):
     def __init__(self, alpha=1.0, lambda_grad=2.0):
         super().__init__()
@@ -81,24 +91,29 @@ class HybridGradientLoss(nn.Module):
         self.alpha = alpha
         self.lambda_grad = lambda_grad
 
-    def forward(self, pred, target):
-        # 1. Pérdida de magnitud absoluta global (L1)
-        loss_l1 = self.l1_loss(pred, target)
-        
+    def forward(self, pred, target, peso=None):
+        # peso: mapa por píxel (más alto en las barras); se normaliza para no cambiar la escala de la pérdida
+        if peso is None:
+            peso = torch.ones_like(target)
+        norma = peso.mean()
+
+        # 1. Pérdida de magnitud absoluta (L1) ponderada
+        loss_l1 = (peso * (pred - target).abs()).mean() / norma
+
         # 2. Cálculo de Gradientes (Derivadas espaciales mediante diferencias finitas) para capturar bordes y detalles finos
         # Diferencias en el eje X (horizontal)
         pred_dx = torch.abs(pred[:, :, :, 1:] - pred[:, :, :, :-1])
         target_dx = torch.abs(target[:, :, :, 1:] - target[:, :, :, :-1])
-        
+
         # Diferencias en el eje Y (vertical)
         pred_dy = torch.abs(pred[:, :, 1:, :] - pred[:, :, :-1, :])
         target_dy = torch.abs(target[:, :, 1:, :] - target[:, :, :-1, :])
-        
+
         # 3. Pérdida de Gradiente (Penaliza bordes borrosos)
-        loss_grad_x = self.l1_loss(pred_dx, target_dx)
-        loss_grad_y = self.l1_loss(pred_dy, target_dy)
+        loss_grad_x = (peso[:, :, :, 1:] * (pred_dx - target_dx).abs()).mean() / norma
+        loss_grad_y = (peso[:, :, 1:, :] * (pred_dy - target_dy).abs()).mean() / norma
         loss_grad = loss_grad_x + loss_grad_y
-        
+
         # 4. Fusión Híbrida
         return (self.alpha * loss_l1) + (self.lambda_grad * loss_grad)
 # ==============================================================================
@@ -129,7 +144,7 @@ class EarlyStopping:
 # ==============================================================================
 def plot_loss_curves(historial, best_epoch, path):
     epocas = [h['epoca'] for h in historial]
-    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+    fig, axes = plt.subplots(1, 4, figsize=(24, 5))
     for ax, clave, titulo in zip(axes, ['total', 'var', 'dens'],
                                  ['Total (Var + Dens)', 'Cabeza Varianza', 'Cabeza Densidad (1/X0)']):
         ax.plot(epocas, [h[f'train_{clave}'] for h in historial], label='Train', color='blue', linewidth=2)
@@ -141,11 +156,18 @@ def plot_loss_curves(historial, best_epoch, path):
         ax.set_title(titulo)
         ax.grid(True, linestyle='--', alpha=0.5)
         ax.legend()
+    # Error de densidad solo en las barras (unidades físicas): lo que más importa
+    axes[3].plot(epocas, [h['val_mae_barras'] for h in historial], color='purple', linewidth=2)
+    axes[3].axvline(best_epoch, color='green', linestyle='--')
+    axes[3].set_xlabel('Época')
+    axes[3].set_ylabel('MAE densidad en barras [$\\int dl/X_0$]')
+    axes[3].set_title('Val: error en las barras')
+    axes[3].grid(True, linestyle='--', alpha=0.5)
     plt.tight_layout()
     plt.savefig(path, dpi=150, bbox_inches='tight')
     plt.close()
 
-def pick_fixed_samples(dataset, tipos=('malla', 'barras', 'barras_oclusiones', 'oclusiones')):
+def pick_fixed_samples(dataset, tipos=('malla', 'grosores', 'barras', 'barras_oclusiones')):
     # Una muestra de validación por tipo de escena; siempre las mismas para ver la evolución
     elegidas = []
     for tipo in tipos:
@@ -163,7 +185,7 @@ def plot_fixed_samples(model, muestras, device, epoch, path):
     model.eval()
     with torch.no_grad():
         for fila, (tipo, idx) in enumerate(items):
-            x, y_var, y_dens = dataset[idx]
+            x, y_var, y_dens, _ = dataset[idx]
             pred_var, pred_dens = model(x.unsqueeze(0).to(device))
             imagenes = [x[0], pred_var[0, 0].cpu(), y_var[0], pred_dens[0, 0].cpu(), y_dens[0]]
             # Predicción y target con la misma escala para compararlos directamente
@@ -185,7 +207,7 @@ def plot_fixed_samples(model, muestras, device, epoch, path):
 # ==============================================================================
 # 4. BUCLE PRINCIPAL DE ENTRENAMIENTO MULTI-TAREA
 # ==============================================================================
-def train_model(data_dir, output_dir="Checkpoints_V7_Denoiser", batch_size=16, epochs=300, lr=3e-4):
+def train_model(data_dir, output_dir="Checkpoints_V7_Denoiser", batch_size=16, epochs=200, lr=3e-4, patience=25):
     os.makedirs(output_dir, exist_ok=True)
     device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
 
@@ -210,7 +232,7 @@ def train_model(data_dir, output_dir="Checkpoints_V7_Denoiser", batch_size=16, e
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=8, pin_memory=True)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=8, pin_memory=True)
     
-    model = RRDB_UNet_Deterministic(in_channels=1, base_dim=32, num_rrdb=3)
+    model = RRDB_UNet_Deterministic(in_channels=2, base_dim=32, num_rrdb=3)
     model = model.to(device)
     
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
@@ -218,7 +240,7 @@ def train_model(data_dir, output_dir="Checkpoints_V7_Denoiser", batch_size=16, e
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-6)
     #criterion = nn.L1Loss().to(device)
     criterion = HybridGradientLoss(alpha=1.0, lambda_grad=2.0).to(device)
-    early_stopping = EarlyStopping(patience=300, min_delta=1e-5)
+    early_stopping = EarlyStopping(patience=patience, min_delta=1e-6)
     
     best_val_loss = float('inf')
     best_epoch = 0
@@ -234,18 +256,19 @@ def train_model(data_dir, output_dir="Checkpoints_V7_Denoiser", batch_size=16, e
         train_var, train_dens = 0.0, 0.0
 
         pbar = tqdm(train_loader, desc=f"Epoch {epoch}/{epochs} [Train]")
-        for condition_x, target_y_var, target_y_dens in pbar:
+        for condition_x, target_y_var, target_y_dens, peso in pbar:
             condition_x = condition_x.to(device, non_blocking=True)
             target_y_var = target_y_var.to(device, non_blocking=True)
             target_y_dens = target_y_dens.to(device, non_blocking=True)
+            peso = peso.to(device, non_blocking=True)
 
             optimizer.zero_grad(set_to_none=True)
 
             # Predicción dual
             pred_y_var, pred_y_dens = model(condition_x)
 
-            loss_var = criterion(pred_y_var, target_y_var)
-            loss_dens = criterion(pred_y_dens, target_y_dens)
+            loss_var = criterion(pred_y_var, target_y_var, peso)
+            loss_dens = criterion(pred_y_dens, target_y_dens, peso)
             loss = loss_var + loss_dens
 
             loss.backward()
@@ -262,25 +285,32 @@ def train_model(data_dir, output_dir="Checkpoints_V7_Denoiser", batch_size=16, e
         # ---------------- VALIDACIÓN ----------------
         model.eval()
         val_var, val_dens = 0.0, 0.0
+        err_barras, px_barras = 0.0, 0.0
         with torch.no_grad():
-            for condition_x, target_y_var, target_y_dens in tqdm(val_loader, desc=f"Epoch {epoch}/{epochs} [Val]", leave=False):
+            for condition_x, target_y_var, target_y_dens, peso in tqdm(val_loader, desc=f"Epoch {epoch}/{epochs} [Val]", leave=False):
                 condition_x = condition_x.to(device, non_blocking=True)
                 target_y_var = target_y_var.to(device, non_blocking=True)
                 target_y_dens = target_y_dens.to(device, non_blocking=True)
+                peso = peso.to(device, non_blocking=True)
 
                 pred_y_var, pred_y_dens = model(condition_x)
 
-                val_var += criterion(pred_y_var, target_y_var).item()
-                val_dens += criterion(pred_y_dens, target_y_dens).item()
+                val_var += criterion(pred_y_var, target_y_var, peso).item()
+                val_dens += criterion(pred_y_dens, target_y_dens, peso).item()
+                en_barras = (peso > 1).float()
+                err_barras += ((pred_y_dens - target_y_dens).abs() * en_barras).sum().item()
+                px_barras += en_barras.sum().item()
 
         val_var /= len(val_loader)
         val_dens /= len(val_loader)
+        val_mae_barras = err_barras / max(px_barras, 1.0) * val_dataset.MAX_DENSITY
         avg_train_loss = train_var + train_dens
         avg_val_loss = val_var + val_dens
         scheduler.step()
 
         current_lr = optimizer.param_groups[0]['lr']
-        print(f"Fin Epoch {epoch} | Train Loss: {avg_train_loss:.5f} | Val Loss: {avg_val_loss:.5f} | LR: {current_lr:.2e}")
+        print(f"Fin Epoch {epoch} | Train Loss: {avg_train_loss:.5f} | Val Loss: {avg_val_loss:.5f} | "
+              f"Val MAE barras: {val_mae_barras:.4f} | LR: {current_lr:.2e}")
 
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
@@ -299,6 +329,7 @@ def train_model(data_dir, output_dir="Checkpoints_V7_Denoiser", batch_size=16, e
         historial.append({
             'epoca': epoch, 'train_total': avg_train_loss, 'val_total': avg_val_loss,
             'train_var': train_var, 'val_var': val_var, 'train_dens': train_dens, 'val_dens': val_dens,
+            'val_mae_barras': val_mae_barras,
             'lr': current_lr, 'segundos': time.time() - t_inicio, 'mejor': int(epoch == best_epoch)
         })
         with open(os.path.join(output_dir, "historial.csv"), "w", newline="") as f:
@@ -306,26 +337,29 @@ def train_model(data_dir, output_dir="Checkpoints_V7_Denoiser", batch_size=16, e
             writer.writeheader()
             writer.writerows(historial)
 
-        if epoch % 5 == 0 or epoch == epochs:
+        early_stopping(avg_val_loss)
+        ultima = epoch == epochs or early_stopping.early_stop
+
+        if epoch % 5 == 0 or ultima:
             plot_loss_curves(historial, best_epoch, os.path.join(output_dir, "training_loss_curve.png"))
 
-        if epoch % 10 == 0 or epoch == 1 or epoch == epochs:
+        if epoch % 10 == 0 or epoch == 1 or ultima:
             plot_fixed_samples(model, muestras_fijas, device, epoch,
                                os.path.join(output_dir, "muestras_val", f"epoca_{epoch:03d}.png"))
 
-        early_stopping(avg_val_loss)
         if early_stopping.early_stop:
             print(f"\n¡Early Stopping activado en la época {epoch}! El modelo dejó de mejorar. Deteniendo el entrenamiento.")
             break
 
 if __name__ == "__main__":
-    DATA_DIR = "datasets/dataset_muografia_V9"
-    OUTPUT_DIR = "checkpoints/V12"
+    DATA_DIR = "datasets/dataset_muografia_V10"
+    OUTPUT_DIR = "checkpoints/V13"
     
     train_model(
         data_dir=DATA_DIR, 
         output_dir=OUTPUT_DIR,
         batch_size=16,
-        epochs=300,
-        lr=5e-4
+        epochs=200,
+        lr=5e-4,
+        patience=25
     )

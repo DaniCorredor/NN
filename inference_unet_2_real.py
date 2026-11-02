@@ -12,29 +12,37 @@ from tqdm import tqdm
 
 
 from Unet import RRDB_UNet_Deterministic
-from data_generator import PEDESTAL, VOXEL_CM, limites_normalizacion
+from data_generator import PEDESTAL, VOXEL_CM, limites_normalizacion, normalizar_muones
 
 # ==============================================================================
-# GEOMETRÍA REAL CONOCIDA (cm, mismas coordenadas que anal_voxel_poca_plomo.ipynb)
-# Solo para dibujar encima de las predicciones: no se usa en el entrenamiento.
+# GEOMETRÍA ESTIMADA (cm). Solo para dibujar encima de las predicciones: no se usa en el entrenamiento.
+# Las muestras se colocan en el hodoscopio sin coordenadas, así que las posiciones salen de ajustar
+# los esquemas M1/M2 (espaciados y diámetros conocidos) a los perfiles del INPUT medido, no a la red.
 # ==============================================================================
-BARRAS = [
-    # Varillas a lo largo de y
-    {"x": (11, 13), "y": (5, 55)}, {"x": (17, 19), "y": (5, 55)}, {"x": (25, 27), "y": (5, 55)},
-    {"x": (35, 37), "y": (5, 55)}, {"x": (47, 49), "y": (5, 55)},
-    # Varillas a lo largo de x
-    {"x": (5, 55), "y": (47, 49)}, {"x": (5, 55), "y": (41, 43)}, {"x": (5, 55), "y": (33, 35)},
-    {"x": (5, 55), "y": (23, 25)}, {"x": (5, 55), "y": (11, 13)},
-]
+def _malla(xs, ys, d=1.9, lo=4.0, hi=54.0):
+    # M1: varillas #6 (Ø1.9 cm); xs = varillas a lo largo de y, ys = varillas a lo largo de x
+    return ([{"x": (x - d / 2, x + d / 2), "y": (lo, hi)} for x in xs] +
+            [{"x": (lo, hi), "y": (y - d / 2, y + d / 2)} for y in ys])
+
+def _grosores(x_barra=(19, 29), x_hueco=(29, 34), ys=(15, 26.5, 39, 52.5), ds=(6, 4, 2, 1)):
+    # M2: barras de 10 cm (Ø6, 4, 2, 1 cm) seguidas de un tubo vacío de 5 cm del mismo diámetro
+    return ([{"x": x_barra, "y": (y - d / 2, y + d / 2)} for y, d in zip(ys, ds)] +
+            [{"x": x_hueco, "y": (y - d / 2, y + d / 2), "hueco": True} for y, d in zip(ys, ds)])
+
 BLOQUES_PLOMO = [
     {"x": (11, 19), "y": (24, 34)}, {"x": (30, 38), "y": (20, 40)}, {"x": (44, 54), "y": (20, 40)},
 ]
-# Prefijo del nombre de la muestra -> geometría (Grosores: falta definir sus coordenadas)
-GEOMETRIAS = {"Mallado": BARRAS, "plomo": BLOQUES_PLOMO}
+# Prefijo del nombre de la muestra -> geometría
+GEOMETRIAS = {
+    "Mallado_mortero": _malla(xs=(15, 19, 25, 33, 43), ys=(46, 42, 36, 28, 18)),
+    "Mallado_arena": _malla(xs=(14, 18, 24, 32, 42), ys=(42, 38, 32, 24, 14)),
+    "Grosores": _grosores(),
+    "plomo": BLOQUES_PLOMO,
+}
 
 def geometria_de(nombre):
     for prefijo, geometria in GEOMETRIAS.items():
-        if nombre.startswith(prefijo):
+        if nombre.lower().startswith(prefijo.lower()):
             return geometria
     return []
 
@@ -68,16 +76,17 @@ def show_map(ax, mapa, cmap, vmin, vmax, titulo, geometria, etiqueta):
     lado_cm = mapa.shape[0] * VOXEL_CM
     im = ax.imshow(mapa.T, origin='lower', cmap=cmap, vmin=vmin, vmax=vmax, extent=[0, lado_cm, 0, lado_cm])
     for g in geometria:
+        hueco = g.get("hueco", False)
         ax.add_patch(patches.Rectangle((g["x"][0], g["y"][0]), g["x"][1] - g["x"][0], g["y"][1] - g["y"][0],
-                                       linewidth=0.8, edgecolor='cyan', facecolor='none', linestyle='--'))
+                                       linewidth=0.8, edgecolor='white' if hueco else 'cyan', facecolor='none',
+                                       linestyle=':' if hueco else '--'))
     ax.set_title(titulo, fontsize=10)
     ax.set_xlabel("X (cm)")
     ax.set_ylabel("Y (cm)")
     plt.colorbar(im, ax=ax, label=etiqueta, fraction=0.046)
 
-def plot_comparison(nombre_muestra, tomas, output_folder):
-    # Todas las tomas de una muestra lado a lado y con la MISMA escala de color por columna
-    tomas = sorted(tomas, key=lambda t: t['dias'])
+def plot_tomas(nombre_muestra, tomas, path, titulo):
+    # Varias tomas de una muestra lado a lado y con la MISMA escala de color por columna
     geometria = geometria_de(nombre_muestra)
     escalas = {
         'input': (PEDESTAL * 0.5, np.percentile(np.concatenate([t['input'].ravel() for t in tomas]), 99)),
@@ -86,12 +95,12 @@ def plot_comparison(nombre_muestra, tomas, output_folder):
     }
     fig, axes = plt.subplots(len(tomas), 3, figsize=(16, 4.6 * len(tomas)), squeeze=False)
     for fila, t in enumerate(tomas):
-        show_map(axes[fila, 0], t['input'], 'inferno', *escalas['input'], f"Input {t['dias']} d", geometria, 'rad$^2$')
-        show_map(axes[fila, 1], t['var'], 'inferno', *escalas['var'], f"Varianza mejorada {t['dias']} d", geometria, 'rad$^2$')
-        show_map(axes[fila, 2], t['dens'], 'viridis', *escalas['dens'], f"Densidad $\\int 1/X_0$ {t['dias']} d", geometria, '$\\int dl/X_0$')
-    fig.suptitle(f"{nombre_muestra}: comparación entre tiempos de observación (misma escala por columna)")
+        show_map(axes[fila, 0], t['input'], 'inferno', *escalas['input'], f"Input {t['etiqueta']}", geometria, 'rad$^2$')
+        show_map(axes[fila, 1], t['var'], 'inferno', *escalas['var'], f"Varianza mejorada {t['etiqueta']}", geometria, 'rad$^2$')
+        show_map(axes[fila, 2], t['dens'], 'viridis', *escalas['dens'], f"Densidad $\\int 1/X_0$ {t['etiqueta']}", geometria, '$\\int dl/X_0$')
+    fig.suptitle(titulo)
     plt.tight_layout()
-    plt.savefig(os.path.join(output_folder, f"comparacion_{nombre_muestra}.png"), dpi=150, bbox_inches='tight')
+    plt.savefig(path, dpi=150, bbox_inches='tight')
     plt.close()
 
 # ==============================================================================
@@ -101,7 +110,7 @@ def cargar_modelo(model_path):
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print(f"Cargando modelo dual RRDB-UNet desde: {model_path}")
 
-    model = RRDB_UNet_Deterministic(in_channels=1, base_dim=32, num_rrdb=3)
+    model = RRDB_UNet_Deterministic(in_channels=2, base_dim=32, num_rrdb=3)
 
     checkpoint = torch.load(model_path, map_location=device, weights_only=True)
     state_dict = checkpoint["model"] if "model" in checkpoint else checkpoint
@@ -115,8 +124,8 @@ def limpiar(mapa):
     mapa = np.nan_to_num(mapa.astype(np.float32), nan=0.0, posinf=0.0, neginf=0.0)
     return np.clip(mapa, 0.0, None)
 
-def inferir_mapa(model, device, mutrec_variance):
-    # Varianza medida (rad^2) -> (varianza N->inf, densidad ∫1/X0) en unidades físicas
+def inferir_mapa(model, device, mutrec_variance, muones):
+    # Varianza medida (rad^2) + muones por píxel -> (varianza N->inf, densidad ∫1/X0) en unidades físicas
     PEDESTAL_MEAN = PEDESTAL
     MAX_VAR, MAX_DENSITY = limites_normalizacion()
 
@@ -125,7 +134,8 @@ def inferir_mapa(model, device, mutrec_variance):
     norm_x = np.clip(x_calibrada / MAX_VAR, 0.0, 1.0).astype(np.float32)
 
     # --- 2. Inferencia de la Red Neuronal (Doble Salida) ---
-    condition_tensor = torch.from_numpy(norm_x).float().unsqueeze(0).unsqueeze(0)
+    entrada = np.stack([norm_x, normalizar_muones(muones)])
+    condition_tensor = torch.from_numpy(entrada).float().unsqueeze(0)
     condition_padded, padding_info = pad_to_multiple(condition_tensor, multiple=16)
     condition_padded = condition_padded.to(device)
 
@@ -161,6 +171,23 @@ def guardar_resultado(output_folder, save_base_name, titulo, mutrec_variance, va
 # ==============================================================================
 # BUCLE DE INFERENCIA DUAL (VARIANZA Y DENSIDAD)
 # ==============================================================================
+def intervalos_independientes(tomas):
+    # Las tomas son ACUMULADAS (la de 6.9 d está dentro de la de 21.6 d). Como var = Σθ²/ΣN,
+    # el intervalo (a, b] sale de restar sumas: var = (var_b N_b - var_a N_a) / (N_b - N_a).
+    # Cada intervalo usa muones distintos: si una estructura aparece en todos, es real.
+    intervalos, anterior = [], None
+    for t in tomas:
+        if anterior is None:
+            intervalos.append(dict(t, etiqueta=f"0-{t['dias']} d"))
+        else:
+            muones = np.clip(t['muones'] - anterior['muones'], 0, None)
+            suma = np.clip(t['input'] * t['muones'] - anterior['input'] * anterior['muones'], 0, None)
+            varianza = np.where(muones > 0, suma / np.maximum(muones, 1), 0.0).astype(np.float32)
+            intervalos.append({'dias': t['dias'], 'input': varianza, 'muones': muones,
+                               'etiqueta': f"{anterior['dias']}-{t['dias']} d"})
+        anterior = t
+    return intervalos
+
 def run_deterministic_inference(input_folder, output_folder, model, device):
     os.makedirs(output_folder, exist_ok=True)
 
@@ -172,9 +199,10 @@ def run_deterministic_inference(input_folder, output_folder, model, device):
     por_muestra = {}
     for file_path in tqdm(npy_files, desc="Procesando inferencia dual"):
         base_name = os.path.basename(file_path)
-        # Los *_var_xy.npy ya vienen en varianza (Σθ²/ΣN por columna)
+        # Los *_var_xy.npy ya vienen en varianza (Σθ²/ΣN por columna); *_N_xy.npy son los muones por columna
         mutrec_variance = limpiar(np.load(file_path))
-        variance_clean, density_clean = inferir_mapa(model, device, mutrec_variance)
+        muones = limpiar(np.load(file_path.replace("_var_xy.npy", "_N_xy.npy")))
+        variance_clean, density_clean = inferir_mapa(model, device, mutrec_variance, muones)
 
         save_base_name = base_name.replace(".npy", "")
         match = re.match(r"(.+)_([\d.]+)d_var_xy\.npy$", base_name)
@@ -184,11 +212,23 @@ def run_deterministic_inference(input_folder, output_folder, model, device):
         guardar_resultado(output_folder, save_base_name, f"{nombre_muestra} {dias} d",
                           mutrec_variance, variance_clean, density_clean, geometria)
         por_muestra.setdefault(nombre_muestra, []).append(
-            {'dias': dias, 'input': mutrec_variance, 'var': variance_clean, 'dens': density_clean})
+            {'dias': dias, 'etiqueta': f"{dias} d", 'input': mutrec_variance, 'muones': muones,
+             'var': variance_clean, 'dens': density_clean})
 
-    # Comparación entre tiempos de observación de la misma muestra
     for nombre_muestra, tomas in por_muestra.items():
-        plot_comparison(nombre_muestra, tomas, output_folder)
+        tomas = sorted(tomas, key=lambda t: t['dias'])
+        # Comparación entre tiempos de observación (acumulados) de la misma muestra
+        plot_tomas(nombre_muestra, tomas, os.path.join(output_folder, f"comparacion_{nombre_muestra}.png"),
+                   f"{nombre_muestra}: tiempos de observación acumulados (misma escala por columna)")
+        # Validación: intervalos de días sin muones en común
+        if len(tomas) > 1:
+            intervalos = intervalos_independientes(tomas)
+            for t in intervalos:
+                t['var'], t['dens'] = inferir_mapa(model, device, t['input'], t['muones'])
+                np.save(os.path.join(output_folder, f"{nombre_muestra}_intervalo_{t['etiqueta'].replace(' ', '')}_density_clean.npy"),
+                        t['dens'].astype(np.float32))
+            plot_tomas(nombre_muestra, intervalos, os.path.join(output_folder, f"independientes_{nombre_muestra}.png"),
+                       f"{nombre_muestra}: intervalos de días INDEPENDIENTES (lo que se repite en todos es real)")
     print(f"Resultados guardados en '{output_folder}'")
 
 # ==============================================================================
@@ -198,6 +238,8 @@ def run_deterministic_inference(input_folder, output_folder, model, device):
 #   directo    -> tal cual, con la misma calibración que los datos originales
 #   reescalado -> aire y concreto llevados a los niveles del mapa original de la
 #                 misma toma (transformación lineal), para compensar el cambio de escala
+# El canal de muones usa el N del mapa original (el N después del filtro no está disponible).
+# Las deconvoluciones (.npz) vienen transpuestas respecto a los mapas originales: se corrigen.
 # ==============================================================================
 def niveles_aire_concreto(mapa):
     # Aire: mediana del borde (8 px) con datos; concreto: mediana del centro 32x32 con datos
@@ -240,26 +282,27 @@ def run_filtered_inference(input_folder, originales_folder, output_folder, model
             print(f"  Nombre no reconocido, se omite: {base_name}")
             continue
         nombre_muestra, dias, tipo = match.group(1), match.group(2), match.group(3)
-        # "mallado_..." y "Mallado_..." son la misma muestra (la geometría se busca con mayúscula)
+        # "mallado_..." y "Mallado_..." son la misma muestra
         nombre_muestra = nombre_muestra[0].upper() + nombre_muestra[1:]
+
+        ruta_original = buscar_original(originales_folder, nombre_muestra, dias)
+        if ruta_original is None:
+            print(f"  Sin mapa original (y sus muones) para {base_name}: se omite")
+            continue
+        original = limpiar(np.load(ruta_original))
+        muones = limpiar(np.load(ruta_original.replace("_var_xy.npy", "_N_xy.npy")))
 
         if tipo == "fil":
             mapa = limpiar(np.load(file_path))
         else:
-            mapa = limpiar(np.load(file_path)["imagen_mejorada"])
+            mapa = limpiar(np.load(file_path)["imagen_mejorada"]).T
 
-        entradas = {"directo": mapa}
-        ruta_original = buscar_original(originales_folder, nombre_muestra, dias)
-        if ruta_original is not None:
-            original = limpiar(np.load(ruta_original))
-            entradas["reescalado"] = reescalar_a_original(mapa, original)
-            por_muestra.setdefault(nombre_muestra, {})["original"] = (original,) + inferir_mapa(model, device, original)
-        else:
-            print(f"  Sin mapa original para {base_name}: solo modo directo")
+        entradas = {"directo": mapa, "reescalado": reescalar_a_original(mapa, original)}
+        por_muestra.setdefault(nombre_muestra, {})["original"] = (original,) + inferir_mapa(model, device, original, muones)
 
         geometria = geometria_de(nombre_muestra)
         for modo, entrada in entradas.items():
-            variance_clean, density_clean = inferir_mapa(model, device, entrada)
+            variance_clean, density_clean = inferir_mapa(model, device, entrada, muones)
             etiqueta = f"{tipo}_{modo}"
             guardar_resultado(output_folder, f"{nombre_muestra}_{dias}d_{etiqueta}", f"{nombre_muestra} {dias} d ({etiqueta})",
                               entrada, variance_clean, density_clean, geometria)
@@ -285,8 +328,8 @@ def run_filtered_inference(input_folder, originales_folder, output_folder, model
 if __name__ == "__main__":
     INPUT_DIR = "datos_reales"   # salida de preparar_datos_reales.py
     FILTRADOS_DIR = "datos_reales_filtrados"
-    OUTPUT_DIR = "resultados/V12"
-    MODEL_PATH = "checkpoints/V12/best_model.pth"
+    OUTPUT_DIR = "resultados/V13"
+    MODEL_PATH = "checkpoints/V13/best_model.pth"
 
     model, device = cargar_modelo(MODEL_PATH)
     run_deterministic_inference(

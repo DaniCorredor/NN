@@ -21,8 +21,8 @@ correr() {
     fi
 }
 
-correr "1/4 Generar dataset (~40 min)"      data_generator.py         1_generar.log
-correr "2/4 Entrenar (varias horas)"        train_Unet_2.py           2_entrenar.log
+correr "1/4 Generar dataset (~1.5 h)"       data_generator.py         1_generar.log
+correr "2/4 Entrenar (hasta ~4.5 h)"        train_Unet_2.py           2_entrenar.log
 correr "3/4 Evaluar en test"                evaluar_test.py           3_evaluar.log
 correr "4/4 Inferencia datos reales"        inference_unet_2_real.py  4_inferencia.log
-paso "TERMINADO. Resultados en checkpoints/V12 y resultados/V12"
+paso "TERMINADO. Resultados en checkpoints/V13 y resultados/V13"
