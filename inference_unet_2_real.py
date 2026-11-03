@@ -121,7 +121,7 @@ def escala_asd(mapas):
     valores = np.concatenate([m[m > 0].ravel() for m in mapas])
     return np.percentile(valores, 1), np.percentile(valores, 99.5)
 
-def plot_tomas(nombre_muestra, tomas, path, titulo):
+def plot_tomas(nombre_muestra, tomas, path, titulo, entrada='Measured (trimmed mean)'):
     # Varias tomas de una muestra, una por fila, con la MISMA escala de color por columna
     geometria = geometria_de(nombre_muestra)
     esc_in = escala_asd([t['input'] / VOXEL_CM for t in tomas])
@@ -129,7 +129,7 @@ def plot_tomas(nombre_muestra, tomas, path, titulo):
     vmax_dens = max(t['dens'].max() for t in tomas)
     fig, axes = plt.subplots(len(tomas), 4, figsize=(22, 4.8 * len(tomas)), squeeze=False)
     for fila, t in enumerate(tomas):
-        show_map(axes[fila, 0], t['input'] / VOXEL_CM, 'asd', *esc_in, f"Measured (trimmed mean), {t['etiqueta']}", geometria)
+        show_map(axes[fila, 0], t['input'] / VOXEL_CM, 'asd', *esc_in, f"{entrada}, {t['etiqueta']}", geometria)
         show_map(axes[fila, 1], t['var'] / VOXEL_CM, 'asd', *esc_var, f"Network: enhanced ASD, {t['etiqueta']}", geometria)
         show_map(axes[fila, 2], t['dens'], 'dens', 0.0, vmax_dens, f"Network: $\\int dl/X_0$, {t['etiqueta']}", geometria)
         show_map(axes[fila, 3], t['prob'], 'prob', 0.0, 1.0, f"Network: iron probability, {t['etiqueta']}", geometria)
@@ -178,14 +178,14 @@ def inferir_mapa(model, device, varianza_medida, muones):
     prob = 1.0 / (1.0 + np.exp(-salidas[2])) if len(salidas) > 2 else np.zeros_like(density_clean)
     return variance_clean, density_clean, prob
 
-def guardar_resultado(output_folder, base, titulo, medida, var, dens, prob, geometria):
+def guardar_resultado(output_folder, base, titulo, medida, var, dens, prob, geometria, entrada='Measured (trimmed mean)'):
     for nombre, mapa in [('variance_clean', var), ('density_clean', dens), ('iron_probability', prob)]:
         np.save(os.path.join(output_folder, f"{base}_{nombre}.npy"), mapa.astype(np.float32))
     np.savetxt(os.path.join(output_folder, f"{base}_density_clean.txt"), dens, fmt="%.6f")
     np.savetxt(os.path.join(output_folder, f"{base}_iron_probability.txt"), prob, fmt="%.4f")
 
     fig, axes = plt.subplots(1, 4, figsize=(24, 5))
-    show_map(axes[0], medida / VOXEL_CM, 'asd', *escala_asd([medida / VOXEL_CM]), f"Measured (trimmed mean): {titulo}", geometria)
+    show_map(axes[0], medida / VOXEL_CM, 'asd', *escala_asd([medida / VOXEL_CM]), f"{entrada}: {titulo}", geometria)
     show_map(axes[1], var / VOXEL_CM, 'asd', *escala_asd([var / VOXEL_CM]), "Network: enhanced ASD (N → ∞)", geometria)
     show_map(axes[2], dens, 'dens', 0.0, dens.max(), "Network: $\\int dl/X_0$ (PSF removed)", geometria)
     show_map(axes[3], prob, 'prob', 0.0, 1.0, "Network: iron probability (red: p = 0.5)", geometria)
@@ -243,6 +243,83 @@ def run_inference(input_folder, output_folder, model, device):
             print(f"{muestra}: {clave} fine-structure correlation between independent intervals {np.round(corr, 2)}")
     print(f"Results saved in '{output_folder}'")
 
+# ==============================================================================
+# PRUEBA DE REFERENCIA: DATOS FILTRADOS (DOCA, ángulo...) Y DECONVOLUCIONADOS
+# Solo imágenes de referencia: la red se calibró con la media recortada SIN filtros.
+# Cada imagen se pasa de dos formas:
+#   direct   -> tal cual
+#   rescaled -> aire y concreto llevados a los niveles del mapa recortado original de la misma
+#               toma (transformación lineal), para compensar el cambio de escala
+# El canal de muones usa el N del mapa original (el N después del filtro no está disponible).
+# Las deconvoluciones (.npz) vienen transpuestas respecto a los mapas originales: se corrigen.
+# ==============================================================================
+def niveles_aire_concreto(mapa):
+    # Aire: mediana del borde (8 px) con datos; concreto: mediana del centro 32x32 con datos
+    con_datos = mapa > 0
+    borde = np.ones_like(con_datos)
+    borde[8:-8, 8:-8] = False
+    centro = mapa[40:72, 40:72]
+    return np.median(mapa[borde & con_datos]), np.median(centro[centro > 0])
+
+def reescalar_a_original(mapa, original):
+    aire_f, conc_f = niveles_aire_concreto(mapa)
+    aire_o, conc_o = niveles_aire_concreto(original)
+    reescalado = aire_o + (mapa - aire_f) * (conc_o - aire_o) / (conc_f - aire_f)
+    reescalado[mapa == 0] = 0.0   # sin muones sigue siendo sin muones
+    return np.clip(reescalado, 0.0, None)
+
+def buscar_original(originales_folder, nombre_muestra, dias):
+    # Empareja sin importar mayúsculas (p. ej. "mallado_arena" con "Mallado_arena")
+    buscado = f"{nombre_muestra}_{dias}d_varrec_xy.npy".lower()
+    for ruta in glob.glob(os.path.join(originales_folder, "*_varrec_xy.npy")):
+        if os.path.basename(ruta).lower() == buscado:
+            return ruta
+    return None
+
+def run_filtered_inference(input_folder, originales_folder, output_folder, model, device):
+    os.makedirs(output_folder, exist_ok=True)
+    archivos = sorted(glob.glob(os.path.join(input_folder, "*_fil.npy")) +
+                      glob.glob(os.path.join(input_folder, "*_deconvolution.npz")))
+    if not archivos:
+        print(f"No *_fil.npy or *_deconvolution.npz files in {input_folder}")
+        return
+
+    por_muestra = {}
+    for file_path in tqdm(archivos, desc="Filtered data (reference)"):
+        base_name = os.path.basename(file_path)
+        match = re.match(r"(.+)_([\d.]+)d_(fil|deconvolution)\.np[yz]$", base_name)
+        if not match:
+            print(f"  Unrecognized name, skipped: {base_name}")
+            continue
+        nombre_muestra, dias, tipo = match.group(1), match.group(2), match.group(3)
+        nombre_muestra = nombre_muestra[0].upper() + nombre_muestra[1:]
+        ruta_original = buscar_original(originales_folder, nombre_muestra, dias)
+        if ruta_original is None:
+            print(f"  No original map (and muons) for {base_name}: skipped")
+            continue
+        original = limpiar(np.load(ruta_original))
+        muones = limpiar(np.load(ruta_original.replace("_varrec_xy.npy", "_N_xy.npy")))
+        mapa = limpiar(np.load(file_path)) if tipo == "fil" else limpiar(np.load(file_path)["imagen_mejorada"]).T
+        etiqueta_tipo = "filtered" if tipo == "fil" else "deconvolved"
+
+        geometria = geometria_de(nombre_muestra)
+        filas = por_muestra.setdefault(nombre_muestra, {})
+        filas["original (trimmed mean)"] = (original,) + inferir_mapa(model, device, original, muones)
+        for modo, entrada in {"direct": mapa, "rescaled": reescalar_a_original(mapa, original)}.items():
+            etiqueta = f"{etiqueta_tipo}, {modo}"
+            salida = inferir_mapa(model, device, entrada, muones)
+            guardar_resultado(output_folder, f"{nombre_muestra}_{dias}d_{tipo}_{modo}",
+                              f"{NOMBRES_TESIS.get(nombre_muestra, nombre_muestra)} {dias} days ({etiqueta})",
+                              entrada, *salida, geometria, entrada='Input')
+            filas[etiqueta] = (entrada,) + salida
+
+    for nombre_muestra, filas in por_muestra.items():
+        tomas = [{'etiqueta': k, 'input': v[0], 'var': v[1], 'dens': v[2], 'prob': v[3]} for k, v in filas.items()]
+        plot_tomas(nombre_muestra, tomas, os.path.join(output_folder, f"summary_{nombre_muestra}.png"),
+                   f"{NOMBRES_TESIS.get(nombre_muestra, nombre_muestra)}: REFERENCE with filtered data "
+                   f"(network not calibrated for them)", entrada='Input')
+    print(f"Reference results saved in '{output_folder}'")
+
 if __name__ == "__main__":
     INPUT_DIR = "datos_reales"   # salida de preparar_recortada.py
     OUTPUT_DIR = "resultados/V14"
@@ -250,3 +327,5 @@ if __name__ == "__main__":
 
     model, device = cargar_modelo(MODEL_PATH)
     run_inference(input_folder=INPUT_DIR, output_folder=OUTPUT_DIR, model=model, device=device)
+    run_filtered_inference(input_folder="datos_reales_filtrados", originales_folder=INPUT_DIR,
+                           output_folder=os.path.join(OUTPUT_DIR, "filtered_reference"), model=model, device=device)
