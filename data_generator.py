@@ -11,29 +11,61 @@ GRID = (112, 112, 120)      # ROI real: 56x56 cm en xy, 60 cm en z
 VOXEL_CM = 0.5
 P_EFF = 1.678
 PEDESTAL = 1.5e-3           # varianza 3D medida en aire (plomo y Grosores) [rad^2]
-# Respuesta medida del detector: V = PEDESTAL + A * T^gamma (calibrar_respuesta.py).
+# Respuesta medida del detector (media de theta^2): V = PEDESTAL + A * T^gamma (calibrar_respuesta.py).
 # Crece ~sqrt(T), más lento que theta0^2 de Highland, por eso no basta un factor de escala.
-RESPUESTA_A = 1.9592e-3
-RESPUESTA_GAMMA = 0.5636
+# V14: recalibrada con la densidad real del concreto (pesos: Mallado ~2.0 g/cm3, Grosores ~1.8 g/cm3)
+# y celdas del Mallado realmente sin barras (geometría M1 ajustada).
+RESPUESTA_A = 2.1666e-3
+RESPUESTA_GAMMA = 0.5284
 K_RUIDO = 6.2               # varianza relativa de theta^2 3D por muón con el espectro del CSV
+# 1/X0 [1/cm] del concreto y la arena, sorteado por muestra: X0 masa ~26.6 g/cm2 con densidad
+# 1.8-2.1 g/cm3 (concreto, de los pesos de las muestras) y ~1.5-1.8 g/cm3 (arena)
+INV_X0_CONCRETO = (0.068, 0.080)
+INV_X0_ARENA = (0.055, 0.068)
 PSF_SIGMA_CM = 0.722        # medida en Deconvolucion/psf.ipynb
 RATE_MAP_PATH = "calibracion/rate_map_xy.npy"  # muones/día/píxel medidos (preparar_datos_reales.py)
+# Aceptancia limpia (toma libre simulada) escalada a muones/día/píxel (preparar_recortada.py).
+# El rate_map anterior suma las muestras reales y lleva impresas las barras del Mallado.
+ACEPTANCIA_PATH = "calibracion/aceptancia_xy.npy"
+# Estimador por columna: media de theta^2 descartando el 10% más alto (preparar_recortada.py)
+FRACCION_RECORTE = 0.10
 MAX_ZENITH_DEG = 15.0       # corte cenital de los datos reales (voxel_data_..._poca_angle_15.0)
 NUM_ANGULOS = 64            # direcciones promediadas por muestra (pocas generan copias fantasma)
 # Cenitales medidos (cielo cos^2*sin*cos x aceptancia del hodoscopio), preparar_datos_reales.py
 ZENITH_HIST_PATH = "calibracion/zenith_hist.npz"
 
 # --- Diferencias simulación/realidad medidas en Mallado y Grosores (se sortean por muestra) ---
-# Contraste real de las barras / simulado: ~0.7 (Ø2 cm, Mallado) y 0.86 (Ø4-6 cm, Grosores)
-FACTOR_HIERRO = (0.6, 1.0)
+# Contraste real de las barras / simulado: ~0.7 (Ø2 cm, Mallado) y 0.86 (Ø4-6 cm, Grosores);
+# con la respuesta recalibrada sigue siendo ~0.65-0.8 (efecto real de PoCA, no de la densidad)
+FACTOR_HIERRO = (0.55, 0.95)
 # El ancho del pico de las barras reales es compatible con PSF de 0.6 a 1.0 cm
 PSF_SIGMA_RANGO_CM = (0.6, 1.0)
-# Ruido por píxel: K entre 5 (ajuste al centro de los datos) y 7.5
-K_RUIDO_RANGO = (5.0, 7.5)
-# Donde la tasa de muones es baja (esquinas del hodoscopio) la varianza real sube:
-# real/sim ~1.1 a tasa relativa 0.22 y ~1.4-2.0 a 0.07. Modelo: V * (1 + k * h), h = max(0, 0.3/tasa_rel - 1)
-SESGO_BAJA_TASA = (0.0, 0.4)
+# Ruido del estimador: banco de medias recortadas de theta^2 por muón REAL (aire, concreto, plomo),
+# para cada N de 1 a N_MAX_BANCO (construir_banco_ruido). Incluye colas reales y el sesgo con N.
+BANCO_RUIDO_PATH = "calibracion/banco_ruido.npz"
+N_MAX_BANCO = 400
+# Donde la aceptancia es baja la varianza real sube (no aparece en la toma libre simulada:
+# es del montaje real). Modelo: V * (1 + k * h), h = max(0, A0/aceptancia_rel - 1); A0 y k
+# calibrados con las zonas homogéneas de los datos recortados (calibrar_v14.py)
+SESGO_A0 = 0.45
+SESGO_BAJA_TASA = (0.1, 0.4)
+# PoCA concentra conteos en los objetos densos: N sube ~0.3 x el contraste local de la varianza
+# (Mallado y Grosores), sin cambiar en bloques homogéneos
+REDISTRIBUCION_N = (0.15, 0.45)
 N_NORM = 256.0              # normalización del canal de muones: log1p(N) / log1p(N_NORM)
+
+def media_recortada(theta2, fraccion=FRACCION_RECORTE):
+    # Media de theta^2 sin el 'fraccion' más alto, con recorte FRACCIONARIO: se conservan
+    # exactamente (1-fraccion)*N muones (el último con peso parcial), así el valor esperado
+    # cambia suave con N. theta2: (N,) o (M, N) con N muones por fila.
+    t = np.sort(np.atleast_2d(theta2), axis=1)
+    n = t.shape[1]
+    if n == 0:
+        return np.zeros(t.shape[0])
+    conservar = (1.0 - fraccion) * n
+    pesos = np.clip(conservar - np.arange(n), 0.0, 1.0)
+    resultado = (t * pesos).sum(axis=1) / conservar
+    return resultado if np.ndim(theta2) > 1 else float(resultado[0])
 
 def detector_response(integral_1_x0):
     T = np.clip(integral_1_x0, 0.0, None)
@@ -53,6 +85,47 @@ def sample_observation_days(rng=np.random):
 
 def normalizar_muones(muones):
     return np.clip(np.log1p(muones) / np.log1p(N_NORM), 0.0, 1.0).astype(np.float32)
+
+def normalizar_entrada(varianza_medida):
+    # La media recortada del aire (~0.6 x PEDESTAL) queda bajo el pedestal: no se resta nada
+    return np.clip(varianza_medida / limites_normalizacion()[0], 0.0, 1.0).astype(np.float32)
+
+def construir_banco_ruido(muestras_path="calibracion/theta2_por_muon.npz", por_n=1024, semilla=0):
+    # Para cada material y cada N: 'por_n' medias recortadas de N valores de theta^2 por muón
+    # reales (normalizados a media 1). Medir = varianza esperada (media) x un valor del banco.
+    rng = np.random.default_rng(semilla)
+    muestras = np.load(muestras_path)
+    banco = {}
+    for clase in ('aire', 'concreto', 'plomo'):
+        w = muestras[clase]
+        tabla = np.ones((N_MAX_BANCO + 1, por_n), dtype=np.float32)
+        for n in range(1, N_MAX_BANCO + 1):
+            tabla[n] = media_recortada(w[rng.integers(0, len(w), (por_n, n))])
+        banco[clase] = tabla
+    np.savez_compressed(BANCO_RUIDO_PATH, **banco)
+    return banco
+
+_BANCO = None
+
+def _factor_ruido(T, muones, rng):
+    # Factor multiplicativo de la medición por píxel. El material decide el banco: aire (T~0),
+    # concreto (T~1-3) o plomo/hierro grueso (T>~9), mezclados según T
+    global _BANCO
+    if _BANCO is None:
+        datos = np.load(BANCO_RUIDO_PATH)
+        _BANCO = np.stack([datos[c] for c in ('aire', 'concreto', 'plomo')])
+    p_concreto = np.clip(T / 1.0, 0.0, 1.0)
+    p_plomo = np.clip((T - 3.0) / 6.0, 0.0, 1.0)
+    u = rng.random(T.shape)
+    clase = np.where(u < p_plomo, 2, np.where(u < p_plomo + (1 - p_plomo) * p_concreto, 1, 0))
+    n = np.clip(muones, 1, N_MAX_BANCO).astype(int)
+    factor = _BANCO[clase, n, rng.integers(0, _BANCO.shape[2], T.shape)]
+    # Más muones que el banco: misma media, dispersión reducida como 1/sqrt(N)
+    grande = muones > N_MAX_BANCO
+    if grande.any():
+        media = _BANCO[clase[grande], N_MAX_BANCO].mean(axis=1)
+        factor[grande] = media + (factor[grande] - media) * np.sqrt(N_MAX_BANCO / muones[grande])
+    return factor
 
 class PhysicalMuographyGenerator:
     def __init__(self, grid_size=(100, 100, 100), voxel_size_cm=1.0, muones_csv_path=None):
@@ -130,6 +203,8 @@ class PhysicalMuographyGenerator:
     def bar_mask(self, dilatacion_px=2):
         # Columnas con hierro (vista vertical), ensanchadas un poco: zonas donde se pondera la pérdida
         columnas = (self.volume == self.materials['iron']).any(axis=2)
+        if dilatacion_px == 0:
+            return columnas.astype(np.uint8)
         return binary_dilation(columnas, iterations=dilatacion_px).astype(np.uint8)
 
     def get_sheared_projection(self, capas, pad, zenith_deg, azimuth_deg):
@@ -187,22 +262,29 @@ def measured_variance(integral_1_x0, muones=None, clean=False):
 
     return varianza_medida.astype(np.float32)
 
-def agregar_ruido(varianza_limpia, rate_map, rng=np.random, dias=None):
-    # Medición de 'dias' días a partir de la varianza esperada (con PSF). Se llama al cargar cada
-    # muestra en el entrenamiento: la red nunca ve dos veces el mismo ruido.
+def agregar_ruido(varianza_limpia, aceptancia, rng=np.random, dias=None):
+    # Medición de 'dias' días (media recortada de theta^2 por columna) a partir de la varianza
+    # esperada con PSF (escala de la media). Se llama al cargar cada muestra en el entrenamiento:
+    # la red nunca ve dos veces el mismo ruido. aceptancia: muones/día/píxel (ACEPTANCIA_PATH).
+    if rng is np.random:
+        # Generador con semilla tomada del estado global (conjunto de prueba reproducible)
+        rng = np.random.default_rng(np.random.randint(2**31))
     if dias is None:
         dias = sample_observation_days(rng)
-    muones = rng.poisson(dias * rate_map)
 
-    # Sesgo medido en las zonas de baja tasa (en coordenadas del detector, no de la muestra)
-    tasa_rel = rate_map / rate_map.max()
-    h = np.clip(0.3 / np.maximum(tasa_rel, 1e-3) - 1.0, 0.0, 4.0)
+    # PoCA concentra conteos en los objetos densos: N sigue el contraste local de la varianza
+    contraste_local = varianza_limpia / np.maximum(gaussian_filter(varianza_limpia, 2.0 / VOXEL_CM), 1e-9) - 1.0
+    redistribucion = np.clip(1.0 + rng.uniform(*REDISTRIBUCION_N) * contraste_local, 0.3, None)
+    muones = rng.poisson(dias * aceptancia * redistribucion)
+
+    # Sesgo medido donde la aceptancia es baja (en coordenadas del detector, no de la muestra)
+    aceptancia_rel = aceptancia / aceptancia.max()
+    h = np.clip(SESGO_A0 / np.maximum(aceptancia_rel, 1e-3) - 1.0, 0.0, 4.0)
     varianza = varianza_limpia * (1.0 + rng.uniform(*SESGO_BAJA_TASA) * h)
 
-    k = rng.uniform(*K_RUIDO_RANGO)
-    forma = np.maximum(muones, 1) / k
-    ruido = rng.gamma(shape=forma, scale=1.0 / forma)
-    varianza_medida = np.where(muones > 0, varianza * ruido, 0.0)
+    # Material de cada píxel (para elegir el banco de ruido): se invierte la respuesta del detector
+    T = (np.clip(varianza_limpia - PEDESTAL, 0.0, None) / RESPUESTA_A) ** (1.0 / RESPUESTA_GAMMA)
+    varianza_medida = np.where(muones > 0, varianza * _factor_ruido(T, muones, rng), 0.0)
     return varianza_medida.astype(np.float32), muones, dias
 
 def get_enmallado_config():
@@ -340,6 +422,8 @@ def build_scene(gen, i):
     # grosores 22%, barras 18%, barras + oclusiones 6%, oclusiones 6%.
     # 40% de los bloques con barras llevan tubos vacíos de manipulación.
     opcion = i % 100
+    gen.materials['concrete'] = np.random.uniform(*INV_X0_CONCRETO)
+    gen.materials['sand'] = np.random.uniform(*INV_X0_ARENA)
     center, size, material = sample_block(gen)
     if opcion < 4:
         return 'aire'
@@ -370,7 +454,7 @@ def build_scene(gen, i):
         add_pvc_tubes(gen, bounds)
     return escena
 
-def generate_deterministic_dataset(num_samples=10000, output_dir="datasets/dataset_muografia_V10", csv_path=None,
+def generate_deterministic_dataset(num_samples=10000, output_dir="datasets/dataset_muografia_V11", csv_path=None,
                                    guardar_ruido=False, semilla=None):
     # Cada muestra guarda la varianza esperada SIN ruido (x_limpio): el ruido se agrega al cargarla.
     # Con guardar_ruido=True (conjunto de prueba) se guarda además una medición fija (x, muones, dias).
@@ -379,7 +463,7 @@ def generate_deterministic_dataset(num_samples=10000, output_dir="datasets/datas
         np.random.seed(semilla)
     grid = GRID
     gen = PhysicalMuographyGenerator(grid_size=grid, voxel_size_cm=VOXEL_CM, muones_csv_path=csv_path)
-    rate_map = np.load(RATE_MAP_PATH)
+    aceptancia = np.load(ACEPTANCIA_PATH)
 
     print(f"Generando {num_samples} muestras rígidamente distribuidas en '{output_dir}'...")
 
@@ -402,15 +486,16 @@ def generate_deterministic_dataset(num_samples=10000, output_dir="datasets/datas
         # Target Densidad: integral física (con el hierro real)
         y_density = T.astype(np.float32)
 
-        datos = dict(x_limpio=x_limpio, y=y_target, density=y_density, mascara=gen.bar_mask(), scene=escena)
+        datos = dict(x_limpio=x_limpio, y=y_target, density=y_density, mascara=gen.bar_mask(),
+                     hierro=gen.bar_mask(dilatacion_px=0), T_hierro=T_hierro.astype(np.float16), scene=escena)
         if guardar_ruido:
-            datos['x'], muones, datos['dias'] = agregar_ruido(x_limpio, rate_map)
+            datos['x'], muones, datos['dias'] = agregar_ruido(x_limpio, aceptancia)
             datos['muones'] = muones.astype(np.uint16)
 
         filename = os.path.join(output_dir, f"sample_{i:05d}.npz")
         np.savez_compressed(filename, **datos)
 
-def generate_test_dataset(num_samples=500, output_dir="datasets/dataset_muografia_Test_V10", csv_path=None):
+def generate_test_dataset(num_samples=500, output_dir="datasets/dataset_muografia_Test_V11", csv_path=None):
     generate_deterministic_dataset(num_samples=num_samples, output_dir=output_dir, csv_path=csv_path,
                                    guardar_ruido=True, semilla=12345)
 
@@ -419,12 +504,12 @@ if __name__ == "__main__":
 
     generate_deterministic_dataset(
         num_samples=10000,
-        output_dir="datasets/dataset_muografia_V10",
+        output_dir="datasets/dataset_muografia_V11",
         csv_path=RUTA_CSV
     )
 
     generate_test_dataset(
         num_samples=500,
-        output_dir="datasets/dataset_muografia_Test_V10",
+        output_dir="datasets/dataset_muografia_Test_V11",
         csv_path=RUTA_CSV
     )

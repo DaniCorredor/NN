@@ -103,8 +103,9 @@ class DoubleConv(nn.Module):
 # 5. RED COMPLETA DETERMINISTA (Bifurcada para Varianza y Densidad)
 # ==============================================================================
 class RRDB_UNet_Deterministic(nn.Module):
-    def __init__(self, in_channels=1, base_dim=64, num_rrdb=3):
+    def __init__(self, in_channels=1, base_dim=64, num_rrdb=3, con_hierro=False):
         super().__init__()
+        self.con_hierro = con_hierro
         
         # --- ENCODER (Extracción de características compartidas) ---
         self.inc = DoubleConv(in_channels, base_dim)
@@ -148,6 +149,15 @@ class RRDB_UNet_Deterministic(nn.Module):
             nn.Conv2d(base_dim // 2, 1, kernel_size=1)
         )
 
+        # Cabezal 3 (opcional, V14): probabilidad de hierro por píxel (logits). Obliga a decidir
+        # "barra / no barra" con forma rígida en lugar de dibujar un sombreado tenue
+        if con_hierro:
+            self.head_iron = nn.Sequential(
+                nn.Conv2d(base_dim, base_dim // 2, kernel_size=3, padding=1),
+                nn.LeakyReLU(0.2, inplace=True),
+                nn.Conv2d(base_dim // 2, 1, kernel_size=1)
+            )
+
     def forward(self, x):
         # Bajada
         x1 = self.inc(x)
@@ -175,5 +185,7 @@ class RRDB_UNet_Deterministic(nn.Module):
         # Bifurcación final
         out_variance = self.head_variance(u1)
         out_density = self.head_density(u1)
-        
+
+        if self.con_hierro:
+            return out_variance, out_density, self.head_iron(u1)
         return out_variance, out_density

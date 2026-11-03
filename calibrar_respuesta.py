@@ -1,42 +1,37 @@
 import numpy as np
+from scipy.optimize import curve_fit
 
-# Calibra la respuesta del detector: V = PEDESTAL + A * T^gamma, con T = ∫dl/X0.
-# Solo usa regiones homogéneas de grosor conocido (bloques de plomo libres y celdas de
-# concreto sin barras). Las barras y oclusiones de Mallado/Grosores quedan para evaluar.
+# Calibra la respuesta del detector (media de theta^2): V = PEDESTAL + A * T^gamma, con T = ∫dl/X0.
+# Solo usa regiones homogéneas de grosor conocido: bloques de plomo libres y concreto SIN barras
+# según las geometrías M1/M2 ajustadas (las celdas de V12/V13 tenían barras). La densidad del
+# concreto sale de los pesos de las muestras: Mallado ~2.0 g/cm3 (103 kg - ~12 kg de hierro),
+# Grosores ~1.8 g/cm3 (69 kg - ~3.5 kg de hierro); X0 másico del concreto ~26.6 g/cm2.
 
 DATOS = "datos_reales"
 PIXEL_CM = 0.5
-MARGEN_CM = 1.0  # se recorta el borde de cada región para evitar la PSF
 PEDESTAL = 1.5e-3
-INV_X0 = {"plomo": 1.0 / 0.5612, "concreto": 0.086}
+X0_CONCRETO_MASA = 26.6
 
-# (muestra, material, grosor_cm, rango_x_cm, rango_y_cm)
+# (muestra, ∫dl/X0, rango_x_cm, rango_y_cm)
 REGIONES = [
-    ("plomo_bloques_84h_3.5d", "plomo", 20, (11, 19), (24, 34)),
-    ("plomo_bloques_84h_3.5d", "plomo", 10, (30, 38), (20, 40)),
-    ("plomo_bloques_84h_3.5d", "plomo", 5, (44, 54), (20, 40)),
-    ("Mallado_mortero_20d_18.9d", "concreto", 21, (28, 34), (26, 32)),
-    ("Mallado_mortero_20d_18.9d", "concreto", 21, (38, 46), (14, 22)),
-    ("Mallado_mortero_20d_18.9d", "concreto", 21, (38, 46), (36, 40)),
+    ("plomo_bloques_84h_3.5d", 20 / 0.5612, (12, 18), (25, 33)),
+    ("plomo_bloques_84h_3.5d", 10 / 0.5612, (31, 37), (22, 38)),
+    ("plomo_bloques_84h_3.5d", 5 / 0.5612, (45, 53), (22, 38)),
+    ("Grosores_mortero_20d_20.6d", 25 * 1.82 / X0_CONCRETO_MASA, (15, 39), (30, 35)),
+    ("Mallado_mortero_20d_18.9d", 21 * 2.0 / X0_CONCRETO_MASA, (35, 41.5), (30, 34)),
 ]
 
-def varianza_region(muestra, rango_x, rango_y):
+def region(muestra, rango_x, rango_y):
     var = np.load(f"{DATOS}/{muestra}_var_xy.npy")
-    conteos = np.load(f"{DATOS}/{muestra}_N_xy.npy")
-    ix = slice(int((rango_x[0] + MARGEN_CM) / PIXEL_CM), int((rango_x[1] - MARGEN_CM) / PIXEL_CM))
-    iy = slice(int((rango_y[0] + MARGEN_CM) / PIXEL_CM), int((rango_y[1] - MARGEN_CM) / PIXEL_CM))
-    return (var[ix, iy] * conteos[ix, iy]).sum() / conteos[ix, iy].sum()
+    sub = var[int(rango_x[0] / PIXEL_CM):int(rango_x[1] / PIXEL_CM), int(rango_y[0] / PIXEL_CM):int(rango_y[1] / PIXEL_CM)]
+    return sub.mean(), sub.std() / np.sqrt(sub.size)
 
-T = np.array([g * INV_X0[m] for _, m, g, _, _ in REGIONES])
-V = np.array([varianza_region(s, x, y) for s, _, _, x, y in REGIONES])
+T = np.array([t for _, t, _, _ in REGIONES])
+V, E = np.array([region(s, x, y) for s, _, x, y in REGIONES]).T
 
-gamma, log_A = np.polyfit(np.log(T), np.log(V - PEDESTAL), 1)
-A = np.exp(log_A)
+respuesta = lambda t, A, gamma: PEDESTAL + A * t**gamma
+(A, gamma), _ = curve_fit(respuesta, T, V, p0=[2e-3, 0.56], sigma=E)
 print(f"RESPUESTA_A = {A:.4e}\nRESPUESTA_GAMMA = {gamma:.4f}")
-for (s, m, g, _, _), t, v in zip(REGIONES, T, V):
-    ajuste = PEDESTAL + A * t**gamma
-    print(f"{m:8s} {g:2d} cm  T={t:5.2f}  medido {v:.2e}  ajuste {ajuste:.2e}  ({100 * (ajuste - v) / v:+.0f}%)")
-
-# Validación independiente: concreto de Grosores (49x30x25 cm), no usado en el ajuste
-v_val = varianza_region("Grosores_mortero_20d_20.6d", (16, 40), (8, 48))
-print(f"Validación Grosores 25 cm: medido {v_val:.2e}  predicho {PEDESTAL + A * (25 * 0.086)**gamma:.2e}")
+for (s, t, _, _), v in zip(REGIONES, V):
+    ajuste = respuesta(t, A, gamma)
+    print(f"{s:28s} T={t:5.2f}  medido {v:.2e}  ajuste {ajuste:.2e}  ({100 * (ajuste - v) / v:+.0f}%)")

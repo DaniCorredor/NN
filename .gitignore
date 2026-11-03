@@ -4,6 +4,8 @@ datasets/
 *.pt
 !modelos/*_fp16.pt
 /*.log
+# Voxelizaciones completas (100 MB): se quedan en el PC; solo se suben sus mapas
+datos_reales/*voxelizacion*
 __pycache__/
 
 # Sí se suben (livianos, para revisarlos desde el PC):

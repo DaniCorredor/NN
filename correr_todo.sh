@@ -21,8 +21,11 @@ correr() {
     fi
 }
 
-correr "1/4 Generar dataset (~1.5 h)"       data_generator.py         1_generar.log
-correr "2/4 Entrenar (hasta ~4.5 h)"        train_Unet_2.py           2_entrenar.log
-correr "3/4 Evaluar en test"                evaluar_test.py           3_evaluar.log
-correr "4/4 Inferencia datos reales"        inference_unet_2_real.py  4_inferencia.log
-paso "TERMINADO. Resultados en checkpoints/V13 y resultados/V13"
+correr "1/5 Generar dataset (~1.5 h)"       data_generator.py         1_generar.log
+correr "2/5 Entrenar (hasta ~5 h)"          train_Unet_2.py           2_entrenar.log
+correr "3/5 Evaluar en test"                evaluar_test.py           3_evaluar.log
+correr "4/5 Inferencia datos reales"        inference_unet_2_real.py  4_inferencia.log
+# Pesos en float16 (~74 MB) para poder subirlos a GitHub y analizarlos en el PC
+paso "INICIO  5/5 Exportar pesos"
+if python3 exportar_pesos.py V14 > logs/5_exportar.log 2>&1; then paso "OK      5/5 Exportar pesos"; else paso "ERROR   5/5 Exportar pesos (revisa logs/5_exportar.log)"; exit 1; fi
+paso "TERMINADO. Resultados en checkpoints/V14, resultados/V14 y modelos/V14_fp16.pt"
