@@ -1,4 +1,5 @@
 import os
+import glob
 import numpy as np
 import pandas as pd
 from scipy.ndimage import gaussian_filter, binary_dilation
@@ -44,11 +45,15 @@ PSF_SIGMA_RANGO_CM = (0.6, 1.0)
 # para cada N de 1 a N_MAX_BANCO (construir_banco_ruido). Incluye colas reales y el sesgo con N.
 BANCO_RUIDO_PATH = "calibracion/banco_ruido.npz"
 N_MAX_BANCO = 400
-# Donde la aceptancia es baja la varianza real sube (no aparece en la toma libre simulada:
-# es del montaje real). Modelo: V * (1 + k * h), h = max(0, A0/aceptancia_rel - 1); A0 y k
-# calibrados con las zonas homogéneas de los datos recortados (calibrar_v14.py)
-SESGO_A0 = 0.45
-SESGO_BAJA_TASA = (0.1, 0.4)
+# Exceso de varianza cerca de los bordes del DETECTOR (aparece también con el hodoscopio vacío):
+# se suma, sube en x = 0, y = 0 e y = 56 y no en x = 56 (calibrar_bordes.py). Su amplitud cambia
+# entre tomas, así que se sortea por borde; la caída también, y el borde x = 56 recibe un mínimo
+# para que la red no dependa de que un borde esté siempre limpio. El ajuste promedia tomas: en
+# Grosores el borde y = 56 tiene ~1.9 veces el exceso ajustado, de ahí el máximo de la escala.
+EXCESO_BORDES_PATH = "calibracion/exceso_bordes.npz"
+EXCESO_ESCALA = (0.3, 2.2)
+EXCESO_ESCALA_LAMBDA = (0.7, 1.4)
+EXCESO_MINIMO = 0.15        # fracción del mayor exceso que recibe como mínimo cada borde
 # PoCA concentra conteos en los objetos densos: N sube ~0.3 x el contraste local de la varianza
 # (Mallado y Grosores), sin cambiar en bloques homogéneos
 REDISTRIBUCION_N = (0.15, 0.45)
@@ -262,6 +267,24 @@ def measured_variance(integral_1_x0, muones=None, clean=False):
 
     return varianza_medida.astype(np.float32)
 
+_EXCESO = None
+
+def exceso_bordes(forma, rng):
+    # sum_b a_b * u_b * exp(-d_b / (lambda_b * v_b)), d_b = distancia al borde b (x=0, x=56, y=0, y=56)
+    global _EXCESO
+    if _EXCESO is None:
+        datos = np.load(EXCESO_BORDES_PATH)
+        _EXCESO = (datos["a"], datos["lam"])
+    a, lam = _EXCESO
+    a = np.maximum(a, EXCESO_MINIMO * a.max()) * rng.uniform(*EXCESO_ESCALA, 4)
+    lam = lam * rng.uniform(*EXCESO_ESCALA_LAMBDA, 4)
+    x = (np.arange(forma[0]) + 0.5) * VOXEL_CM
+    y = (np.arange(forma[1]) + 0.5) * VOXEL_CM
+    lado_x, lado_y = forma[0] * VOXEL_CM, forma[1] * VOXEL_CM
+    en_x = a[0] * np.exp(-x / lam[0]) + a[1] * np.exp(-(lado_x - x) / lam[1])
+    en_y = a[2] * np.exp(-y / lam[2]) + a[3] * np.exp(-(lado_y - y) / lam[3])
+    return (en_x[:, None] + en_y[None, :]).astype(np.float32)
+
 def agregar_ruido(varianza_limpia, aceptancia, rng=np.random, dias=None):
     # Medición de 'dias' días (media recortada de theta^2 por columna) a partir de la varianza
     # esperada con PSF (escala de la media). Se llama al cargar cada muestra en el entrenamiento:
@@ -277,10 +300,8 @@ def agregar_ruido(varianza_limpia, aceptancia, rng=np.random, dias=None):
     redistribucion = np.clip(1.0 + rng.uniform(*REDISTRIBUCION_N) * contraste_local, 0.3, None)
     muones = rng.poisson(dias * aceptancia * redistribucion)
 
-    # Sesgo medido donde la aceptancia es baja (en coordenadas del detector, no de la muestra)
-    aceptancia_rel = aceptancia / aceptancia.max()
-    h = np.clip(SESGO_A0 / np.maximum(aceptancia_rel, 1e-3) - 1.0, 0.0, 4.0)
-    varianza = varianza_limpia * (1.0 + rng.uniform(*SESGO_BAJA_TASA) * h)
+    # Exceso de los bordes del detector (coordenadas del detector, no de la muestra)
+    varianza = varianza_limpia + exceso_bordes(varianza_limpia.shape, rng)
 
     # Material de cada píxel (para elegir el banco de ruido): se invierte la respuesta del detector
     T = (np.clip(varianza_limpia - PEDESTAL, 0.0, None) / RESPUESTA_A) ** (1.0 / RESPUESTA_GAMMA)
@@ -459,6 +480,10 @@ def generate_deterministic_dataset(num_samples=10000, output_dir="datasets/datas
     # Cada muestra guarda la varianza esperada SIN ruido (x_limpio): el ruido se agrega al cargarla.
     # Con guardar_ruido=True (conjunto de prueba) se guarda además una medición fija (x, muones, dias).
     os.makedirs(output_dir, exist_ok=True)
+    if len(glob.glob(os.path.join(output_dir, "sample_*.npz"))) >= num_samples:
+        # Las muestras guardan la varianza SIN ruido: el ruido nuevo se aplica al cargarlas
+        print(f"'{output_dir}' ya tiene {num_samples} muestras: no se regenera")
+        return
     if semilla is not None:
         np.random.seed(semilla)
     grid = GRID
@@ -495,7 +520,7 @@ def generate_deterministic_dataset(num_samples=10000, output_dir="datasets/datas
         filename = os.path.join(output_dir, f"sample_{i:05d}.npz")
         np.savez_compressed(filename, **datos)
 
-def generate_test_dataset(num_samples=500, output_dir="datasets/dataset_muografia_Test_V11", csv_path=None):
+def generate_test_dataset(num_samples=500, output_dir="datasets/dataset_muografia_Test_V12", csv_path=None):
     generate_deterministic_dataset(num_samples=num_samples, output_dir=output_dir, csv_path=csv_path,
                                    guardar_ruido=True, semilla=12345)
 
@@ -510,6 +535,6 @@ if __name__ == "__main__":
 
     generate_test_dataset(
         num_samples=500,
-        output_dir="datasets/dataset_muografia_Test_V11",
+        output_dir="datasets/dataset_muografia_Test_V12",
         csv_path=RUTA_CSV
     )

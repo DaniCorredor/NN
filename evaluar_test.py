@@ -1,5 +1,6 @@
 import os
 import csv
+import json
 import glob
 import numpy as np
 import torch
@@ -17,7 +18,22 @@ from train_Unet_2 import MuographyStaticDataset
 #   mae_var, mae_var_no_net   error de la varianza con la red y usando el input directamente
 #   mae_dens_bars / _outside  error de densidad dentro / fuera de las barras
 #   bar_contrast_recovered    exceso de densidad predicho sobre el concreto / exceso real (1 = completo)
-#   iron_dice, precision, recall   salida de probabilidad de hierro con umbral 0.5
+#   iron_dice, precision, recall   salida de probabilidad de hierro con el umbral calibrado: el que da
+#                                  el mejor Dice medio en este conjunto (se guarda en UMBRAL_ARCHIVO
+#                                  y lo usa la inferencia real)
+
+UMBRAL_ARCHIVO = "iron_threshold.json"
+UMBRALES = np.round(np.arange(0.20, 0.96, 0.05), 2)
+
+def metricas_hierro(prob, barras, umbral):
+    pred_fe = prob > umbral
+    tp = float((pred_fe & barras).sum())
+    return {
+        'iron_dice': 2 * tp / max(float(pred_fe.sum() + barras.sum()), 1.0) if barras.any() else np.nan,
+        'iron_precision': tp / float(pred_fe.sum()) if pred_fe.any() else np.nan,
+        'iron_recall': tp / float(barras.sum()) if barras.any() else np.nan,
+        'false_iron_fraction': float(pred_fe[~barras].float().mean()),
+    }
 
 def evaluate_test(test_dir, model_path, output_dir, ejemplos_por_tipo=2):
     os.makedirs(output_dir, exist_ok=True)
@@ -33,7 +49,7 @@ def evaluate_test(test_dir, model_path, output_dir, ejemplos_por_tipo=2):
     dataset = MuographyStaticDataset(test_dir, files_list=files, ruido_fijo=True)
     max_var, max_dens = dataset.MAX_VAR, dataset.MAX_DENSITY
 
-    filas, ejemplos = [], {}
+    filas, ejemplos, mapas_hierro = [], {}, []
     with torch.no_grad():
         for idx in tqdm(range(len(dataset)), desc="Evaluating test set"):
             datos = np.load(files[idx])
@@ -45,8 +61,7 @@ def evaluate_test(test_dir, model_path, output_dir, ejemplos_por_tipo=2):
             prob = torch.sigmoid(logits[0]).cpu()
             barras = y_fe > 0.5
             err_dens = (pred_dens - y_dens).abs()
-            pred_fe = prob > 0.5
-            tp = float((pred_fe & barras).sum())
+            mapas_hierro.append((prob, barras))
 
             # Errores en unidades físicas (rad^2 para la varianza, ∫dl/X0 para la densidad)
             fila = {
@@ -58,14 +73,25 @@ def evaluate_test(test_dir, model_path, output_dir, ejemplos_por_tipo=2):
                 # concreto bajo la barra = densidad real - aporte del hierro
                 'bar_contrast_recovered': float((pred_dens - y_dens + T_fe)[barras].sum() / T_fe[barras].sum())
                                           if barras.any() else np.nan,
-                'iron_dice': 2 * tp / max(float(pred_fe.sum() + barras.sum()), 1.0) if barras.any() else np.nan,
-                'iron_precision': tp / float(pred_fe.sum()) if pred_fe.any() else np.nan,
-                'iron_recall': tp / float(barras.sum()) if barras.any() else np.nan,
-                'false_iron_fraction': float(pred_fe[~barras].float().mean()),
             }
             filas.append(fila)
             if len(ejemplos.setdefault(escena, [])) < ejemplos_por_tipo:
                 ejemplos[escena].append((x[0], pred_dens[0], y_dens[0], prob[0], y_fe[0]))
+
+    # Umbral de la probabilidad de hierro: el de mejor Dice medio (muestras con hierro)
+    print(f"\n{'threshold':>9s} {'Dice':>6s} {'prec.':>6s} {'recall':>6s} {'false Fe':>8s}")
+    dice_medio = []
+    for umbral in UMBRALES:
+        m = [metricas_hierro(p, b, umbral) for p, b in mapas_hierro]
+        dice_medio.append(np.nanmean([r['iron_dice'] for r in m]))
+        print(f"{umbral:9.2f} {dice_medio[-1]:6.3f} {np.nanmean([r['iron_precision'] for r in m]):6.3f} "
+              f"{np.nanmean([r['iron_recall'] for r in m]):6.3f} {np.mean([r['false_iron_fraction'] for r in m]):8.4f}")
+    umbral = float(UMBRALES[int(np.argmax(dice_medio))])
+    with open(os.path.join(output_dir, UMBRAL_ARCHIVO), "w") as f:
+        json.dump({"iron_threshold": umbral, "mean_dice": float(max(dice_medio))}, f)
+    print(f"Calibrated iron threshold: {umbral:.2f} (mean Dice {max(dice_medio):.3f})")
+    for fila, (p, b) in zip(filas, mapas_hierro):
+        fila.update(metricas_hierro(p, b, umbral))
 
     with open(os.path.join(output_dir, "metrics_per_sample.csv"), "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=list(filas[0].keys()))
@@ -117,7 +143,7 @@ def evaluate_test(test_dir, model_path, output_dir, ejemplos_por_tipo=2):
     for k, (m, c) in enumerate([('iron_dice', 'tab:blue'), ('iron_precision', 'tab:orange'), ('iron_recall', 'tab:gray')]):
         axes[2].bar(pos + (k - 1) * 0.27, [r[m] for r in sin_total], 0.27, label=m.replace('iron_', '').capitalize(), color=c)
     axes[2].set_ylim(0, 1)
-    axes[2].set_title('Iron probability map (threshold 0.5)')
+    axes[2].set_title(f'Iron probability map (threshold {umbral:.2f})')
     axes[2].legend()
     for ax in axes:
         ax.set_xticks(pos)
@@ -149,7 +175,7 @@ def evaluate_test(test_dir, model_path, output_dir, ejemplos_por_tipo=2):
 
 if __name__ == "__main__":
     evaluate_test(
-        test_dir="datasets/dataset_muografia_Test_V11",
-        model_path="checkpoints/V14/best_model.pth",
-        output_dir="resultados/V14/test_evaluation",
+        test_dir="datasets/dataset_muografia_Test_V12",
+        model_path="checkpoints/V15/best_model.pth",
+        output_dir="resultados/V15/test_evaluation",
     )

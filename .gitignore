@@ -12,3 +12,6 @@ __pycache__/
 #   resultados/   -> imágenes, .npy, .txt, métricas de test
 #   checkpoints/  -> historial.csv, curvas y muestras_val (sin los .pth)
 #   logs/         -> logs de cada paso
+# Voxelizaciones con un solo filtro (20 MB c/u): se quedan en el PC; solo se suben sus mapas
+datos_reales_filtrados/*.npz
+!datos_reales_filtrados/*_deconvolution.npz

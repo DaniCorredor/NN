@@ -1,4 +1,5 @@
 import os
+import json
 import re
 import glob
 import torch
@@ -21,7 +22,10 @@ from data_generator import PEDESTAL, VOXEL_CM, limites_normalizacion, normalizar
 LIMITES_CM = (4, 56)
 # Las coordenadas de los mapas son las de la voxelización (x = primer índice). Según la profundidad
 # de las barras del Mallado coinciden con el esquema M1; True rota 180° solo las figuras.
-ROTAR_180 = False
+ROTAR_180 = True
+# Umbral de la probabilidad de hierro (contorno rojo): el calibrado en el conjunto de prueba
+# (evaluar_test.py lo guarda en iron_threshold.json); 0.5 si no existe
+UMBRAL_HIERRO = 0.5
 
 # ==============================================================================
 # GEOMETRÍA ESTIMADA (cm). Solo para dibujar encima de las predicciones: no se usa en el entrenamiento.
@@ -33,8 +37,10 @@ def _malla(xs, ys, d=1.9, lo=4.0, hi=54.0):
     return ([{"x": (x - d / 2, x + d / 2), "y": (lo, hi)} for x in xs] +
             [{"x": (lo, hi), "y": (y - d / 2, y + d / 2)} for y in ys])
 
-def _grosores(x_barra=(19, 29), x_hueco=(29, 34), ys=(15, 26.5, 39, 52.5), ds=(6, 4, 2, 1)):
-    # M2: barras de 10 cm (Ø6, 4, 2, 1 cm) seguidas de un tubo vacío de 5 cm del mismo diámetro
+def _grosores(x_barra=(19, 29), x_hueco=(29, 34), ys=(14.0, 27.9, 40.7, 50.7), ds=(6, 4, 2, 1)):
+    # M2: barras de 10 cm (Ø6, 4, 2, 1 cm) seguidas de un tubo vacío de 5 cm del mismo diámetro.
+    # Centros en y ajustados al input (perfiles de cuerda + PSF, iguales en los 3 intervalos
+    # independientes a ±0.3 cm); la de 1 cm no se resuelve y va a 10 cm de la de 2 cm (dato de la muestra)
     return ([{"x": x_barra, "y": (y - d / 2, y + d / 2)} for y, d in zip(ys, ds)] +
             [{"x": x_hueco, "y": (y - d / 2, y + d / 2), "hueco": True} for y, d in zip(ys, ds)])
 
@@ -109,7 +115,7 @@ def show_map(ax, mapa, tipo, vmin, vmax, titulo, geometria):
                                        linestyle=':' if hueco else '--'))
     if tipo == 'prob':
         ax.contour(np.linspace(0, lado_cm, mapa.shape[0]), np.linspace(0, lado_cm, mapa.shape[1]),
-                   imagen, levels=[0.5], colors='tab:red', linewidths=0.8)
+                   imagen, levels=[UMBRAL_HIERRO], colors='tab:red', linewidths=0.8)
     ax.set_xlim(*LIMITES_CM)
     ax.set_ylim(*LIMITES_CM)
     ax.set_title(titulo, fontsize=10)
@@ -188,7 +194,7 @@ def guardar_resultado(output_folder, base, titulo, medida, var, dens, prob, geom
     show_map(axes[0], medida / VOXEL_CM, 'asd', *escala_asd([medida / VOXEL_CM]), f"{entrada}: {titulo}", geometria)
     show_map(axes[1], var / VOXEL_CM, 'asd', *escala_asd([var / VOXEL_CM]), "Network: enhanced ASD (N → ∞)", geometria)
     show_map(axes[2], dens, 'dens', 0.0, dens.max(), "Network: $\\int dl/X_0$ (PSF removed)", geometria)
-    show_map(axes[3], prob, 'prob', 0.0, 1.0, "Network: iron probability (red: p = 0.5)", geometria)
+    show_map(axes[3], prob, 'prob', 0.0, 1.0, f"Network: iron probability (red: p = {UMBRAL_HIERRO:.2f})", geometria)
     plt.tight_layout()
     plt.savefig(os.path.join(output_folder, f"{base}_network.png"), dpi=150, bbox_inches='tight')
     plt.close()
@@ -200,7 +206,10 @@ def run_inference(input_folder, output_folder, model, device):
     os.makedirs(output_folder, exist_ok=True)
     # Tomas acumuladas: {muestra}_{dias}d_varrec_xy.npy; intervalos: {muestra}_int_{a}-{b}d_varrec_xy.npy
     # (preparar_recortada.py). Los muones de cada uno: el mismo nombre con _N_xy.npy
-    archivos = sorted(glob.glob(os.path.join(input_folder, "*_varrec_xy.npy")))
+    # La toma vacía (0.7 d) es solo para calibrar el exceso de los bordes: está fuera del rango de
+    # días del entrenamiento (3-25 d) y la red inventa estructura en ella
+    archivos = sorted(r for r in glob.glob(os.path.join(input_folder, "*_varrec_xy.npy"))
+                      if not os.path.basename(r).startswith("vacio_exp"))
     if not archivos:
         print(f"No *_varrec_xy.npy files in {input_folder} (run preparar_recortada.py)")
         return
@@ -313,6 +322,22 @@ def run_filtered_inference(input_folder, originales_folder, output_folder, model
                               entrada, *salida, geometria, entrada='Input')
             filas[etiqueta] = (entrada,) + salida
 
+    # Un solo filtro (voxelizaciones *_doca.npz / *_angulo.npz -> media recortada con preparar_recortada):
+    # mismo estimador que los originales, así que entran directo con su propio N
+    for ruta in sorted(glob.glob(os.path.join(input_folder, "*_varrec_xy.npy"))):
+        match = re.match(r"(.+)_([\d.]+)d_(doca|angulo)_varrec_xy\.npy$", os.path.basename(ruta))
+        if not match:
+            continue
+        nombre_muestra, dias, filtro = match.group(1), match.group(2), match.group(3)
+        nombre_muestra = nombre_muestra[0].upper() + nombre_muestra[1:]
+        mapa = limpiar(np.load(ruta))
+        salida = inferir_mapa(model, device, mapa, limpiar(np.load(ruta.replace("_varrec_xy.npy", "_N_xy.npy"))))
+        etiqueta = {"doca": "DOCA cut only", "angulo": "incidence-angle cut only"}[filtro]
+        guardar_resultado(output_folder, f"{nombre_muestra}_{dias}d_{filtro}",
+                          f"{NOMBRES_TESIS.get(nombre_muestra, nombre_muestra)} {dias} days ({etiqueta})",
+                          mapa, *salida, geometria_de(nombre_muestra), entrada='Input (trimmed mean)')
+        por_muestra.setdefault(nombre_muestra, {})[etiqueta] = (mapa,) + salida
+
     for nombre_muestra, filas in por_muestra.items():
         tomas = [{'etiqueta': k, 'input': v[0], 'var': v[1], 'dens': v[2], 'prob': v[3]} for k, v in filas.items()]
         plot_tomas(nombre_muestra, tomas, os.path.join(output_folder, f"summary_{nombre_muestra}.png"),
@@ -322,8 +347,13 @@ def run_filtered_inference(input_folder, originales_folder, output_folder, model
 
 if __name__ == "__main__":
     INPUT_DIR = "datos_reales"   # salida de preparar_recortada.py
-    OUTPUT_DIR = "resultados/V14"
-    MODEL_PATH = "checkpoints/V14/best_model.pth"
+    OUTPUT_DIR = "resultados/V15"
+    MODEL_PATH = "checkpoints/V15/best_model.pth"
+    umbral_path = os.path.join(OUTPUT_DIR, "test_evaluation", "iron_threshold.json")
+    if os.path.exists(umbral_path):
+        with open(umbral_path) as f:
+            UMBRAL_HIERRO = json.load(f)["iron_threshold"]
+    print(f"Iron threshold: {UMBRAL_HIERRO:.2f}")
 
     model, device = cargar_modelo(MODEL_PATH)
     run_inference(input_folder=INPUT_DIR, output_folder=OUTPUT_DIR, model=model, device=device)
