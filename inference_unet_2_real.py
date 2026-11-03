@@ -114,7 +114,9 @@ def cargar_modelo(model_path):
 
     checkpoint = torch.load(model_path, map_location=device, weights_only=True)
     state_dict = checkpoint["model"] if "model" in checkpoint else checkpoint
-    clean_state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
+    # .float(): también acepta los pesos exportados en float16 (exportar_pesos.py)
+    clean_state_dict = {k.replace('module.', ''): v.float() if v.is_floating_point() else v
+                        for k, v in state_dict.items()}
     model.load_state_dict(clean_state_dict)
     model = model.to(device)
     model.eval()

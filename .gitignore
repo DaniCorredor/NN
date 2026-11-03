@@ -2,6 +2,7 @@
 datasets/
 *.pth
 *.pt
+!modelos/*_fp16.pt
 /*.log
 __pycache__/
 
