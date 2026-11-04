@@ -1,11 +1,11 @@
-2026-11-03 18:53  INICIO  1/5 Generar dataset de prueba (~5 min; el de entrenamiento V11 se reutiliza)
-2026-11-03 18:56  OK      1/5 Generar dataset de prueba (~5 min; el de entrenamiento V11 se reutiliza)
-2026-11-03 18:56  INICIO  2/5 Entrenar (hasta ~5 h)
-2026-11-03 22:11  OK      2/5 Entrenar (hasta ~5 h)
-2026-11-03 22:11  INICIO  3/5 Evaluar en test
-2026-11-03 22:15  OK      3/5 Evaluar en test
-2026-11-03 22:15  INICIO  4/5 Inferencia datos reales
-2026-11-03 22:18  OK      4/5 Inferencia datos reales
-2026-11-03 22:18  INICIO  5/5 Exportar pesos
-2026-11-03 22:18  OK      5/5 Exportar pesos
-2026-11-03 22:18  TERMINADO. Resultados en checkpoints/V15, resultados/V15 y modelos/V15_fp16.pt
+2026-11-03 23:05  INICIO  1/5 Generar dataset de prueba (~5 min; el de entrenamiento V11 se reutiliza)
+2026-11-03 23:08  OK      1/5 Generar dataset de prueba (~5 min; el de entrenamiento V11 se reutiliza)
+2026-11-03 23:08  INICIO  2/5 Entrenar (hasta ~5 h)
+2026-11-04 02:11  OK      2/5 Entrenar (hasta ~5 h)
+2026-11-04 02:11  INICIO  3/5 Evaluar en test
+2026-11-04 02:12  OK      3/5 Evaluar en test
+2026-11-04 02:12  INICIO  4/5 Inferencia datos reales
+2026-11-04 02:14  OK      4/5 Inferencia datos reales
+2026-11-04 02:14  INICIO  5/5 Exportar pesos
+2026-11-04 02:14  OK      5/5 Exportar pesos
+2026-11-04 02:14  TERMINADO. Resultados en checkpoints/V16, resultados/V16 y modelos/V16_fp16.pt
