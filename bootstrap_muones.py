@@ -53,16 +53,20 @@ class Remuestreo:
         return self.media_recortada(self.valores[sorteo])
 
 def figura(muestra, original, salida, frecuencia, std_dens, path):
+    # Fila 1: medida y salidas de la red (ASD mejorada, densidad); fila 2: hierro y bootstrap
     var, dens, prob = salida
     nombre = inf.NOMBRES_TESIS.get(muestra, muestra)
     geometria = inf.geometria_de(muestra)
-    fig, axes = plt.subplots(1, 4, figsize=(24, 5))
-    inf.show_map(axes[0], original / inf.VOXEL_CM, 'asd', *inf.escala_asd([original / inf.VOXEL_CM]),
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+    inf.show_map(axes[0, 0], original / inf.VOXEL_CM, 'asd', *inf.ESCALA_ENTRADA_ASD,
                  f"Measured (trimmed mean): {nombre}", geometria)
-    inf.show_map(axes[1], prob, 'prob', 0.0, 1.0, f"Network: iron probability (red: p = {inf.UMBRAL_HIERRO:.2f})", geometria)
-    inf.show_map(axes[2], frecuencia, 'freq', 0.0, 1.0,
+    inf.show_map(axes[0, 1], var / inf.VOXEL_CM, 'asd', *inf.escala_asd([var / inf.VOXEL_CM]),
+                 "Network: enhanced ASD (N → ∞)", geometria)
+    inf.show_map(axes[0, 2], dens, 'dens', 0.0, float(dens.max()), "Network: $\\int dl/X_0$ (PSF removed)", geometria)
+    inf.show_map(axes[1, 0], prob, 'prob', 0.0, 1.0, f"Network: iron probability (red: p = {inf.UMBRAL_HIERRO:.2f})", geometria)
+    inf.show_map(axes[1, 1], frecuencia, 'freq', 0.0, 1.0,
                  f"Bootstrap ({REPETICIONES} muon resamplings): iron detection frequency", geometria)
-    inf.show_map(axes[3], std_dens, 'std', 0.0, float(np.percentile(std_dens, 99.5)),
+    inf.show_map(axes[1, 2], std_dens, 'std', 0.0, float(np.percentile(std_dens, 99.5)),
                  "Bootstrap: statistical uncertainty of $\\int dl/X_0$", geometria)
     plt.tight_layout()
     plt.savefig(path, dpi=150, bbox_inches='tight')

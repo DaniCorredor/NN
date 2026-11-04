@@ -312,7 +312,7 @@ def figura(nombre, medida, prob, res, path):
     mapa_res = np.full((LADO, LADO), np.nan)
     mapa_res[res["region"]] = residuo
     fig, axes = plt.subplots(1, 4, figsize=(24, 5))
-    inf.show_map(axes[0], medida / VOXEL_CM, 'asd', *inf.escala_asd([medida / VOXEL_CM]),
+    inf.show_map(axes[0], medida / VOXEL_CM, 'asd', *inf.ESCALA_ENTRADA_ASD,
                  f"Measured (trimmed mean): {titulo}", geometria)
     inf.show_map(axes[1], prob, 'prob', 0.0, 1.0, f"Network: iron probability (red: p = {inf.UMBRAL_HIERRO:.2f})", geometria)
     rigido = modelo_rigido(res)

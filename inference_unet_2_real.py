@@ -20,6 +20,8 @@ from data_generator import PEDESTAL, VOXEL_CM, limites_normalizacion, normalizar
 # Figuras en inglés (tesis). Mapas de varianza en "average scattering density" = varianza / tamaño
 # del vóxel proyectado (0.5 cm), en escala logarítmica; densidad y probabilidad en escala lineal.
 LIMITES_CM = (4, 56)
+# Escala fija (logarítmica) de la average scattering density medida en todas las figuras
+ESCALA_ENTRADA_ASD = (0.8e-3, 1.28e-2)
 # Las coordenadas de los mapas son las de la voxelización (x = primer índice). TRANSPONER = True
 # dibuja como en la tesis: el y del detector en horizontal y el x en vertical (Grosores: barras
 # verticales, de la más gruesa a la izquierda a la más delgada a la derecha; Mallado: zona de más
@@ -151,7 +153,7 @@ def escala_asd(mapas):
 def plot_tomas(nombre_muestra, tomas, path, titulo, entrada='Measured (trimmed mean)'):
     # Varias tomas de una muestra, una por fila, con la MISMA escala de color por columna
     geometria = geometria_de(nombre_muestra)
-    esc_in = escala_asd([t['input'] / VOXEL_CM for t in tomas])
+    esc_in = ESCALA_ENTRADA_ASD
     esc_var = escala_asd([t['var'] / VOXEL_CM for t in tomas])
     vmax_dens = max(t['dens'].max() for t in tomas)
     fig, axes = plt.subplots(len(tomas), 4, figsize=(22, 4.8 * len(tomas)), squeeze=False)
@@ -212,7 +214,7 @@ def guardar_resultado(output_folder, base, titulo, medida, var, dens, prob, geom
     np.savetxt(os.path.join(output_folder, f"{base}_iron_probability.txt"), prob, fmt="%.4f")
 
     fig, axes = plt.subplots(1, 4, figsize=(24, 5))
-    show_map(axes[0], medida / VOXEL_CM, 'asd', *escala_asd([medida / VOXEL_CM]), f"{entrada}: {titulo}", geometria)
+    show_map(axes[0], medida / VOXEL_CM, 'asd', *ESCALA_ENTRADA_ASD, f"{entrada}: {titulo}", geometria)
     show_map(axes[1], var / VOXEL_CM, 'asd', *escala_asd([var / VOXEL_CM]), "Network: enhanced ASD (N → ∞)", geometria)
     show_map(axes[2], dens, 'dens', 0.0, dens.max(), "Network: $\\int dl/X_0$ (PSF removed)", geometria)
     show_map(axes[3], prob, 'prob', 0.0, 1.0, f"Network: iron probability (red: p = {UMBRAL_HIERRO:.2f})", geometria)

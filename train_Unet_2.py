@@ -176,9 +176,14 @@ class EarlyStopping:
 # 3. SEGUIMIENTO DEL ENTRENAMIENTO (curvas y muestras fijas de validación)
 # ==============================================================================
 def plot_loss_curves(historial, best_epoch, path):
+    # Fila 1 (lo más importante): pérdida total y reconstrucción de barras en validación.
+    # Fila 2: pérdida de cada salida de la red.
     epocas = [h['epoca'] for h in historial]
-    fig, axes = plt.subplots(1, 5, figsize=(30, 5))
-    for ax, clave, titulo in zip(axes, ['total', 'var', 'dens', 'hierro'],
+    fig = plt.figure(figsize=(18, 10))
+    rejilla = fig.add_gridspec(2, 6)
+    ejes = [fig.add_subplot(rejilla[0, 0:3]), fig.add_subplot(rejilla[1, 0:2]),
+            fig.add_subplot(rejilla[1, 2:4]), fig.add_subplot(rejilla[1, 4:6])]
+    for ax, clave, titulo in zip(ejes, ['total', 'var', 'dens', 'hierro'],
                                  ['Total loss', 'Variance head', 'Density head ($\\int 1/X_0$)', 'Iron probability head']):
         ax.plot(epocas, [h[f'train_{clave}'] for h in historial], label='Train', color='blue', linewidth=2)
         ax.plot(epocas, [h[f'val_{clave}'] for h in historial], label='Validation', color='orange', linewidth=2)
@@ -190,7 +195,7 @@ def plot_loss_curves(historial, best_epoch, path):
         ax.grid(True, linestyle='--', alpha=0.5)
         ax.legend()
     # Lo que más importa: calidad de las barras en validación
-    ax = axes[4]
+    ax = fig.add_subplot(rejilla[0, 3:6])
     ax.plot(epocas, [h['val_dice'] for h in historial], color='purple', linewidth=2, label='Iron Dice (p > 0.5)')
     ax.set_ylim(0, 1)
     ax.set_xlabel('Epoch')
