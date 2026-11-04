@@ -411,7 +411,7 @@ def train_model(data_dir, output_dir="Checkpoints_V7_Denoiser", batch_size=16, e
 
 if __name__ == "__main__":
     DATA_DIR = "datasets/dataset_muografia_V11"
-    OUTPUT_DIR = "checkpoints/V15"
+    OUTPUT_DIR = "checkpoints/V16"
     
     train_model(
         data_dir=DATA_DIR, 

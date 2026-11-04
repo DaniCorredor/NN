@@ -175,7 +175,7 @@ def evaluate_test(test_dir, model_path, output_dir, ejemplos_por_tipo=2):
 
 if __name__ == "__main__":
     evaluate_test(
-        test_dir="datasets/dataset_muografia_Test_V12",
-        model_path="checkpoints/V15/best_model.pth",
-        output_dir="resultados/V15/test_evaluation",
+        test_dir="datasets/dataset_muografia_Test_V13",
+        model_path="checkpoints/V16/best_model.pth",
+        output_dir="resultados/V16/test_evaluation",
     )

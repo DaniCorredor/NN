@@ -20,9 +20,11 @@ from data_generator import PEDESTAL, VOXEL_CM, limites_normalizacion, normalizar
 # Figuras en inglés (tesis). Mapas de varianza en "average scattering density" = varianza / tamaño
 # del vóxel proyectado (0.5 cm), en escala logarítmica; densidad y probabilidad en escala lineal.
 LIMITES_CM = (4, 56)
-# Las coordenadas de los mapas son las de la voxelización (x = primer índice). Según la profundidad
-# de las barras del Mallado coinciden con el esquema M1; True rota 180° solo las figuras.
-ROTAR_180 = True
+# Las coordenadas de los mapas son las de la voxelización (x = primer índice). TRANSPONER = True
+# dibuja como en la tesis: el y del detector en horizontal y el x en vertical (Grosores: barras
+# verticales, de la más gruesa a la izquierda a la más delgada a la derecha; Mallado: zona de más
+# barras abajo a la derecha). Solo cambia las figuras, no los .npy.
+TRANSPONER = True
 # Umbral de la probabilidad de hierro (contorno rojo): el calibrado en el conjunto de prueba
 # (evaluar_test.py lo guarda en iron_threshold.json); 0.5 si no existe
 UMBRAL_HIERRO = 0.5
@@ -96,19 +98,17 @@ TIPOS_MAPA = {
 }
 
 def show_map(ax, mapa, tipo, vmin, vmax, titulo, geometria):
-    # Los mapas están indexados [x, y]: se transponen para dibujar x horizontal, y vertical (en cm)
+    # Los mapas están indexados [x, y] del detector; ver TRANSPONER
     cmap, log, etiqueta = TIPOS_MAPA[tipo]
     lado_cm = mapa.shape[0] * VOXEL_CM
-    imagen = mapa.T
-    if ROTAR_180:
-        imagen = imagen[::-1, ::-1]
+    imagen = mapa if TRANSPONER else mapa.T
     norma = LogNorm(vmin=vmin, vmax=vmax) if log else None
     im = ax.imshow(np.clip(imagen, vmin, None) if log else imagen, origin='lower', cmap=cmap, norm=norma,
                    vmin=None if log else vmin, vmax=None if log else vmax, extent=[0, lado_cm, 0, lado_cm])
     for g in geometria:
         (x0, x1), (y0, y1) = g["x"], g["y"]
-        if ROTAR_180:
-            (x0, x1), (y0, y1) = (lado_cm - x1, lado_cm - x0), (lado_cm - y1, lado_cm - y0)
+        if TRANSPONER:
+            (x0, x1), (y0, y1) = (y0, y1), (x0, x1)
         hueco = g.get("hueco", False)
         ax.add_patch(patches.Rectangle((x0, y0), x1 - x0, y1 - y0, linewidth=0.8,
                                        edgecolor='white' if hueco else 'cyan', facecolor='none',
@@ -347,8 +347,8 @@ def run_filtered_inference(input_folder, originales_folder, output_folder, model
 
 if __name__ == "__main__":
     INPUT_DIR = "datos_reales"   # salida de preparar_recortada.py
-    OUTPUT_DIR = "resultados/V15"
-    MODEL_PATH = "checkpoints/V15/best_model.pth"
+    OUTPUT_DIR = "resultados/V16"
+    MODEL_PATH = "checkpoints/V16/best_model.pth"
     umbral_path = os.path.join(OUTPUT_DIR, "test_evaluation", "iron_threshold.json")
     if os.path.exists(umbral_path):
         with open(umbral_path) as f:

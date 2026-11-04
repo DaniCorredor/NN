@@ -45,15 +45,18 @@ PSF_SIGMA_RANGO_CM = (0.6, 1.0)
 # para cada N de 1 a N_MAX_BANCO (construir_banco_ruido). Incluye colas reales y el sesgo con N.
 BANCO_RUIDO_PATH = "calibracion/banco_ruido.npz"
 N_MAX_BANCO = 400
-# Exceso de varianza cerca de los bordes del DETECTOR (aparece también con el hodoscopio vacío):
-# se suma, sube en x = 0, y = 0 e y = 56 y no en x = 56 (calibrar_bordes.py). Su amplitud cambia
-# entre tomas, así que se sortea por borde; la caída también, y el borde x = 56 recibe un mínimo
-# para que la red no dependa de que un borde esté siempre limpio. El ajuste promedia tomas: en
-# Grosores el borde y = 56 tiene ~1.9 veces el exceso ajustado, de ahí el máximo de la escala.
+# Exceso de varianza que agrega el DETECTOR (aparece igual con el hodoscopio vacío y se suma igual
+# en aire y en concreto; calibrar_bordes.py): una BANDA paralela a x en y ~ 10 cm, un ESCALÓN desde
+# y ~ 49.5 cm y una subida exponencial hacia x = 0; nada en x = 56. Banda y escalón tienen forma de
+# barra paralela a x: V15 (que los modelaba como subidas exponenciales desde el borde) los marcaba
+# como hierro. La amplitud cambia entre tomas (0.45 a 1.1 veces el ajuste según la fuente), así que
+# se sortean amplitud, posición y ancho de cada parte; x = 56 recibe un mínimo para no depender
+# de que un borde esté siempre limpio.
 EXCESO_BORDES_PATH = "calibracion/exceso_bordes.npz"
-EXCESO_ESCALA = (0.3, 2.2)
-EXCESO_ESCALA_LAMBDA = (0.7, 1.4)
-EXCESO_MINIMO = 0.15        # fracción del mayor exceso que recibe como mínimo cada borde
+EXCESO_ESCALA = (0.3, 2.0)
+EXCESO_ESCALA_ANCHO = (0.7, 1.4)
+EXCESO_DESPLAZAMIENTO_CM = 1.5
+EXCESO_MINIMO = 0.15        # fracción de la subida de x = 0 que recibe como mínimo x = 56
 # PoCA concentra conteos en los objetos densos: N sube ~0.3 x el contraste local de la varianza
 # (Mallado y Grosores), sin cambiar en bloques homogéneos
 REDISTRIBUCION_N = (0.15, 0.45)
@@ -270,19 +273,21 @@ def measured_variance(integral_1_x0, muones=None, clean=False):
 _EXCESO = None
 
 def exceso_bordes(forma, rng):
-    # sum_b a_b * u_b * exp(-d_b / (lambda_b * v_b)), d_b = distancia al borde b (x=0, x=56, y=0, y=56)
+    # Banda en y = yB + escalón en y = yT + exponencial desde x = 0 (y desde x = 56), sorteados
     global _EXCESO
     if _EXCESO is None:
-        datos = np.load(EXCESO_BORDES_PATH)
-        _EXCESO = (datos["a"], datos["lam"])
-    a, lam = _EXCESO
-    a = np.maximum(a, EXCESO_MINIMO * a.max()) * rng.uniform(*EXCESO_ESCALA, 4)
-    lam = lam * rng.uniform(*EXCESO_ESCALA_LAMBDA, 4)
+        _EXCESO = {k: float(v) for k, v in np.load(EXCESO_BORDES_PATH).items()}
+    p = _EXCESO
+    escala = rng.uniform(*EXCESO_ESCALA, 4)
+    ancho = rng.uniform(*EXCESO_ESCALA_ANCHO, 4)
+    corrimiento = rng.uniform(-EXCESO_DESPLAZAMIENTO_CM, EXCESO_DESPLAZAMIENTO_CM, 2)
     x = (np.arange(forma[0]) + 0.5) * VOXEL_CM
     y = (np.arange(forma[1]) + 0.5) * VOXEL_CM
-    lado_x, lado_y = forma[0] * VOXEL_CM, forma[1] * VOXEL_CM
-    en_x = a[0] * np.exp(-x / lam[0]) + a[1] * np.exp(-(lado_x - x) / lam[1])
-    en_y = a[2] * np.exp(-y / lam[2]) + a[3] * np.exp(-(lado_y - y) / lam[3])
+    a_derecha = max(p["aR"], EXCESO_MINIMO * p["aL"])
+    en_x = (escala[0] * p["aL"] * np.exp(-x / (p["lL"] * ancho[0])) +
+            escala[1] * a_derecha * np.exp(-(forma[0] * VOXEL_CM - x) / (p["lL"] * ancho[1])))
+    en_y = (escala[2] * p["aB"] * np.exp(-0.5 * ((y - p["yB"] - corrimiento[0]) / (p["wB"] * ancho[2])) ** 2) +
+            escala[3] * p["aT"] / (1.0 + np.exp(-(y - p["yT"] - corrimiento[1]) / (p["wT"] * ancho[3]))))
     return (en_x[:, None] + en_y[None, :]).astype(np.float32)
 
 def agregar_ruido(varianza_limpia, aceptancia, rng=np.random, dias=None):
@@ -520,7 +525,7 @@ def generate_deterministic_dataset(num_samples=10000, output_dir="datasets/datas
         filename = os.path.join(output_dir, f"sample_{i:05d}.npz")
         np.savez_compressed(filename, **datos)
 
-def generate_test_dataset(num_samples=500, output_dir="datasets/dataset_muografia_Test_V12", csv_path=None):
+def generate_test_dataset(num_samples=500, output_dir="datasets/dataset_muografia_Test_V13", csv_path=None):
     generate_deterministic_dataset(num_samples=num_samples, output_dir=output_dir, csv_path=csv_path,
                                    guardar_ruido=True, semilla=12345)
 
@@ -535,6 +540,6 @@ if __name__ == "__main__":
 
     generate_test_dataset(
         num_samples=500,
-        output_dir="datasets/dataset_muografia_Test_V12",
+        output_dir="datasets/dataset_muografia_Test_V13",
         csv_path=RUTA_CSV
     )

@@ -27,5 +27,5 @@ correr "3/5 Evaluar en test"                evaluar_test.py           3_evaluar.
 correr "4/5 Inferencia datos reales"        inference_unet_2_real.py  4_inferencia.log
 # Pesos en float16 (~74 MB) para poder subirlos a GitHub y analizarlos en el PC
 paso "INICIO  5/5 Exportar pesos"
-if python3 exportar_pesos.py V15 > logs/5_exportar.log 2>&1; then paso "OK      5/5 Exportar pesos"; else paso "ERROR   5/5 Exportar pesos (revisa logs/5_exportar.log)"; exit 1; fi
-paso "TERMINADO. Resultados en checkpoints/V15, resultados/V15 y modelos/V15_fp16.pt"
+if python3 exportar_pesos.py V16 > logs/5_exportar.log 2>&1; then paso "OK      5/5 Exportar pesos"; else paso "ERROR   5/5 Exportar pesos (revisa logs/5_exportar.log)"; exit 1; fi
+paso "TERMINADO. Resultados en checkpoints/V16, resultados/V16 y modelos/V16_fp16.pt"
