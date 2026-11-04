@@ -28,6 +28,10 @@ TRANSPONER = True
 # Umbral de la probabilidad de hierro (contorno rojo): el calibrado en el conjunto de prueba
 # (evaluar_test.py lo guarda en iron_threshold.json); 0.5 si no existe
 UMBRAL_HIERRO = 0.5
+# Zona poco confiable del detector (confiabilidad.py: bandas del detector y pocos muones) rayada
+MOSTRAR_CONFIABILIDAD = True
+matplotlib.rcParams['hatch.color'] = '0.8'
+matplotlib.rcParams['hatch.linewidth'] = 0.5
 
 # ==============================================================================
 # GEOMETRÍA ESTIMADA (cm). Solo para dibujar encima de las predicciones: no se usa en el entrenamiento.
@@ -95,7 +99,18 @@ TIPOS_MAPA = {
     'asd': ('inferno', True, 'Average Scattering Density [rad$^2$/cm]'),
     'dens': ('viridis', False, '$\\int dl/X_0$'),
     'prob': ('gray', False, 'Iron probability'),
+    'freq': ('gray', False, 'Detection frequency'),
+    'std': ('cividis', False, 'Std. dev. of $\\int dl/X_0$'),
 }
+
+_POCO_CONFIABLE = None
+
+def zona_poco_confiable(forma):
+    global _POCO_CONFIABLE
+    if _POCO_CONFIABLE is None:
+        from confiabilidad import mapa_confiable
+        _POCO_CONFIABLE = ~mapa_confiable(forma)
+    return _POCO_CONFIABLE
 
 def show_map(ax, mapa, tipo, vmin, vmax, titulo, geometria):
     # Los mapas están indexados [x, y] del detector; ver TRANSPONER
@@ -113,9 +128,15 @@ def show_map(ax, mapa, tipo, vmin, vmax, titulo, geometria):
         ax.add_patch(patches.Rectangle((x0, y0), x1 - x0, y1 - y0, linewidth=0.8,
                                        edgecolor='white' if hueco else 'cyan', facecolor='none',
                                        linestyle=':' if hueco else '--'))
-    if tipo == 'prob':
-        ax.contour(np.linspace(0, lado_cm, mapa.shape[0]), np.linspace(0, lado_cm, mapa.shape[1]),
-                   imagen, levels=[UMBRAL_HIERRO], colors='tab:red', linewidths=0.8)
+    centros = (np.arange(mapa.shape[0]) + 0.5) * VOXEL_CM
+    if tipo in ('prob', 'freq'):
+        ax.contour(centros, centros, imagen, levels=[UMBRAL_HIERRO if tipo == 'prob' else 0.5],
+                   colors='tab:red', linewidths=0.8)
+    if MOSTRAR_CONFIABILIDAD:
+        poco = zona_poco_confiable(mapa.shape).astype(float)
+        poco = poco if TRANSPONER else poco.T
+        ax.contourf(centros, centros, poco, levels=[0.5, 1.5], colors='none', hatches=['////'])
+        ax.contour(centros, centros, poco, levels=[0.5], colors='0.8', linewidths=0.6, linestyles=':')
     ax.set_xlim(*LIMITES_CM)
     ax.set_ylim(*LIMITES_CM)
     ax.set_title(titulo, fontsize=10)

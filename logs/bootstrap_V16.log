@@ -1,0 +1,4 @@
+Loading RRDB-UNet from: modelos/V16_fp16.pt
+Mallado_arena_20d {'iron_pixels_stable_90pct': 0.7231281781518499, 'iron_pixels_unstable_lt50pct': 0.04295984569524811, 'iron_pixels_stable_90pct_reliable_zone': 0.7451698867421719, 'mean_density_std': 0.10958239436149597, 'file': 'voxel_data_n_3112_nhits_1_disMax_4cm_poca_angle_15.0.npz'}
+Mallado_mortero_20d {'iron_pixels_stable_90pct': 0.7080279232111693, 'iron_pixels_unstable_lt50pct': 0.03420593368237347, 'iron_pixels_stable_90pct_reliable_zone': 0.7377148025324088, 'mean_density_std': 0.12544725835323334, 'file': 'voxel_data_n_2728_nhits_1_disMax_4cm_poca_angle_15.0.npz'}
+Grosores_mortero_20d {'iron_pixels_stable_90pct': 0.6706349206349206, 'iron_pixels_unstable_lt50pct': 0.04365079365079365, 'iron_pixels_stable_90pct_reliable_zone': 0.6452830188679245, 'mean_density_std': 0.06428248435258865, 'file': 'voxel_data_n_2968_nhits_1_disMax_4cm_poca_angle_15.0.npz'}

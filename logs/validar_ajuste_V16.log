@@ -1,0 +1,61 @@
+Loading RRDB-UNet from: modelos/V16_fp16.pt
+Momento Efectivo (p_eff) calibrado: 1.683 GeV/c
+{'scene': 'malla', 'true_bars': 7, 'fitted_bars': 8, 'false_bars': 1}
+{'scene': 'malla', 'true_bars': 8, 'fitted_bars': 5, 'false_bars': 0}
+{'scene': 'malla', 'true_bars': 2, 'fitted_bars': 0, 'false_bars': 0}
+{'scene': 'malla', 'true_bars': 4, 'fitted_bars': 2, 'false_bars': 0}
+{'scene': 'malla', 'true_bars': 5, 'fitted_bars': 6, 'false_bars': 2}
+{'scene': 'malla', 'true_bars': 5, 'fitted_bars': 7, 'false_bars': 3}
+{'scene': 'malla', 'true_bars': 3, 'fitted_bars': 2, 'false_bars': 0}
+{'scene': 'malla', 'true_bars': 10, 'fitted_bars': 15, 'false_bars': 6}
+{'scene': 'malla', 'true_bars': 5, 'fitted_bars': 4, 'false_bars': 0}
+{'scene': 'malla', 'true_bars': 4, 'fitted_bars': 3, 'false_bars': 1}
+{'scene': 'malla', 'true_bars': 6, 'fitted_bars': 8, 'false_bars': 2}
+{'scene': 'malla', 'true_bars': 6, 'fitted_bars': 9, 'false_bars': 4}
+{'scene': 'malla', 'true_bars': 7, 'fitted_bars': 9, 'false_bars': 2}
+{'scene': 'malla', 'true_bars': 8, 'fitted_bars': 9, 'false_bars': 1}
+{'scene': 'malla', 'true_bars': 5, 'fitted_bars': 0, 'false_bars': 0}
+{'scene': 'grosores', 'true_bars': 4, 'fitted_bars': 2, 'false_bars': 0}
+{'scene': 'grosores', 'true_bars': 5, 'fitted_bars': 3, 'false_bars': 0}
+{'scene': 'grosores', 'true_bars': 3, 'fitted_bars': 2, 'false_bars': 0}
+{'scene': 'grosores', 'true_bars': 3, 'fitted_bars': 2, 'false_bars': 0}
+{'scene': 'grosores', 'true_bars': 3, 'fitted_bars': 3, 'false_bars': 0}
+{'scene': 'grosores', 'true_bars': 2, 'fitted_bars': 1, 'false_bars': 0}
+{'scene': 'grosores', 'true_bars': 3, 'fitted_bars': 3, 'false_bars': 0}
+{'scene': 'grosores', 'true_bars': 4, 'fitted_bars': 4, 'false_bars': 0}
+{'scene': 'grosores', 'true_bars': 3, 'fitted_bars': 1, 'false_bars': 0}
+{'scene': 'grosores', 'true_bars': 4, 'fitted_bars': 2, 'false_bars': 0}
+{'scene': 'grosores', 'true_bars': 5, 'fitted_bars': 3, 'false_bars': 1}
+{'scene': 'grosores', 'true_bars': 3, 'fitted_bars': 2, 'false_bars': 0}
+{'scene': 'grosores', 'true_bars': 2, 'fitted_bars': 2, 'false_bars': 0}
+{'scene': 'grosores', 'true_bars': 3, 'fitted_bars': 2, 'false_bars': 0}
+{'scene': 'grosores', 'true_bars': 3, 'fitted_bars': 2, 'false_bars': 0}
+{'scene': 'barras', 'true_bars': 5, 'fitted_bars': 4, 'false_bars': 1}
+{'scene': 'barras', 'true_bars': 2, 'fitted_bars': 4, 'false_bars': 2}
+{'scene': 'barras', 'true_bars': 5, 'fitted_bars': 3, 'false_bars': 0}
+{'scene': 'barras', 'true_bars': 3, 'fitted_bars': 3, 'false_bars': 1}
+{'scene': 'barras', 'true_bars': 2, 'fitted_bars': 1, 'false_bars': 0}
+{'scene': 'barras', 'true_bars': 6, 'fitted_bars': 5, 'false_bars': 2}
+{'scene': 'barras', 'true_bars': 3, 'fitted_bars': 3, 'false_bars': 0}
+{'scene': 'barras', 'true_bars': 3, 'fitted_bars': 3, 'false_bars': 0}
+{'scene': 'barras', 'true_bars': 2, 'fitted_bars': 2, 'false_bars': 0}
+{'scene': 'barras', 'true_bars': 2, 'fitted_bars': 2, 'false_bars': 0}
+{'scene': 'barras', 'true_bars': 3, 'fitted_bars': 3, 'false_bars': 0}
+{'scene': 'barras', 'true_bars': 2, 'fitted_bars': 2, 'false_bars': 0}
+{'scene': 'barras', 'true_bars': 2, 'fitted_bars': 1, 'false_bars': 0}
+{'scene': 'barras', 'true_bars': 1, 'fitted_bars': 0, 'false_bars': 0}
+{'scene': 'barras', 'true_bars': 4, 'fitted_bars': 3, 'false_bars': 0}
+threshold  false/scene  Ø1-1.5  Ø1.5-2.5  Ø2.5-4  Ø4-6.1
+  0.00      0.64       0.17    0.62    0.86    0.95
+  1.00      0.51       0.17    0.52    0.78    0.95
+  2.00      0.33       0.17    0.41    0.74    0.90
+  3.00      0.20       0.06    0.30    0.57    0.90
+  4.00      0.13       0.00    0.22    0.41    0.85
+  5.00      0.09       0.00    0.11    0.29    0.76
+  6.00      0.02       0.00    0.08    0.21    0.66
+  7.00      0.00       0.00    0.00    0.17    0.51
+  8.00      0.00       0.00    0.00    0.10    0.44
+  9.00      0.00       0.00    0.00    0.05    0.37
+ 10.00      0.00       0.00    0.00    0.03    0.32
+Chosen: {'threshold_sigma': 4.25, 'false_bars_per_scene': 0.08888888888888889, 'recall_d1-1.5': 0.0, 'recall_d1.5-2.5': 0.15873015873015872, 'recall_d2.5-4': 0.3620689655172414, 'recall_d4-6.1': 0.8048780487804879}
+Diameter error at that threshold (fit - true): mean +0.17 cm, std 1.16 cm

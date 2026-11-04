@@ -1,0 +1,14 @@
+{
+  "Mallado_arena_20d_21.6d": {
+    "bars": 8,
+    "chi2_dof": 0.8926842053755293
+  },
+  "Mallado_mortero_20d_18.9d": {
+    "bars": 10,
+    "chi2_dof": 0.8981310597301405
+  },
+  "Grosores_mortero_20d_20.6d": {
+    "bars": 3,
+    "chi2_dof": 0.8666401573767021
+  }
+}
