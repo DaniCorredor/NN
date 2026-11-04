@@ -52,14 +52,16 @@ class Remuestreo:
         sorteo = self.inicio[self.columna] + (rng.random(self.columna.size) * self.largos[self.columna]).astype(int)
         return self.media_recortada(self.valores[sorteo])
 
-def figura(muestra, original, salida, frecuencia, std_dens, path):
-    # Fila 1: medida y salidas de la red (ASD mejorada, densidad); fila 2: hierro y bootstrap
+def figura(muestra, original, salida, frecuencia, std_dens, path, mostrar=None,
+           etiqueta_entrada="Measured (trimmed mean)"):
+    # Fila 1: medida y salidas de la red (ASD mejorada, densidad); fila 2: hierro y bootstrap.
+    # mostrar (opcional): mapa que se dibuja como medida (p. ej. el estimador clásico de la tesis)
     var, dens, prob = salida
     nombre = inf.NOMBRES_TESIS.get(muestra, muestra)
     geometria = inf.geometria_de(muestra)
     fig, axes = plt.subplots(2, 3, figsize=(18, 10))
-    inf.show_map(axes[0, 0], original / inf.VOXEL_CM, 'asd', *inf.ESCALA_ENTRADA_ASD,
-                 f"Measured (trimmed mean): {nombre}", geometria)
+    inf.show_map(axes[0, 0], (original if mostrar is None else mostrar) / inf.VOXEL_CM, 'asd', *inf.ESCALA_ENTRADA_ASD,
+                 f"{etiqueta_entrada}: {nombre}", geometria)
     inf.show_map(axes[0, 1], var / inf.VOXEL_CM, 'asd', *inf.escala_asd([var / inf.VOXEL_CM]),
                  "Network: enhanced ASD (N → ∞)", geometria)
     inf.show_map(axes[0, 2], dens, 'dens', 0.0, float(dens.max()), "Network: $\\int dl/X_0$ (PSF removed)", geometria)

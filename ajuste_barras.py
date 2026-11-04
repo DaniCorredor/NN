@@ -304,7 +304,8 @@ def tabla_barras(res, confiable):
 def modelo_rigido(res):
     return sum((cuerda_barra(*b) for b in res["barras"]), np.zeros((LADO, LADO)))
 
-def figura(nombre, medida, prob, res, path):
+def figura(nombre, medida, prob, res, path, mostrar=None, etiqueta_entrada="Measured (trimmed mean)"):
+    # mostrar (opcional): mapa que se dibuja como medida (p. ej. el estimador clásico de la tesis)
     geometria = inf.geometria_de(nombre)
     titulo = inf.NOMBRES_TESIS.get(nombre, nombre)
     aj = res["ajuste"]
@@ -312,8 +313,8 @@ def figura(nombre, medida, prob, res, path):
     mapa_res = np.full((LADO, LADO), np.nan)
     mapa_res[res["region"]] = residuo
     fig, axes = plt.subplots(1, 4, figsize=(24, 5))
-    inf.show_map(axes[0], medida / VOXEL_CM, 'asd', *inf.ESCALA_ENTRADA_ASD,
-                 f"Measured (trimmed mean): {titulo}", geometria)
+    inf.show_map(axes[0], (medida if mostrar is None else mostrar) / VOXEL_CM, 'asd', *inf.ESCALA_ENTRADA_ASD,
+                 f"{etiqueta_entrada}: {titulo}", geometria)
     inf.show_map(axes[1], prob, 'prob', 0.0, 1.0, f"Network: iron probability (red: p = {inf.UMBRAL_HIERRO:.2f})", geometria)
     rigido = modelo_rigido(res)
     inf.TIPOS_MAPA['rigid'] = ('bone_r', False, 'Projected iron thickness [cm]')

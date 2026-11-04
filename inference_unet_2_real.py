@@ -158,7 +158,9 @@ def plot_tomas(nombre_muestra, tomas, path, titulo, entrada='Measured (trimmed m
     vmax_dens = max(t['dens'].max() for t in tomas)
     fig, axes = plt.subplots(len(tomas), 4, figsize=(22, 4.8 * len(tomas)), squeeze=False)
     for fila, t in enumerate(tomas):
-        show_map(axes[fila, 0], t['input'] / VOXEL_CM, 'asd', *esc_in, f"{entrada}, {t['etiqueta']}", geometria)
+        # 'input_display' (opcional): mapa que se dibuja como medida en vez del que recibió la red
+        show_map(axes[fila, 0], t.get('input_display', t['input']) / VOXEL_CM, 'asd', *esc_in,
+                 f"{entrada}, {t['etiqueta']}", geometria)
         show_map(axes[fila, 1], t['var'] / VOXEL_CM, 'asd', *esc_var, f"Network: enhanced ASD, {t['etiqueta']}", geometria)
         show_map(axes[fila, 2], t['dens'], 'dens', 0.0, vmax_dens, f"Network: $\\int dl/X_0$, {t['etiqueta']}", geometria)
         show_map(axes[fila, 3], t['prob'], 'prob', 0.0, 1.0, f"Network: iron probability, {t['etiqueta']}", geometria)
