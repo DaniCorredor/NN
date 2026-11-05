@@ -8,13 +8,13 @@ from data_generator import EXCESO_BORDES_PATH, FACTOR_HIERRO, PSF_SIGMA_RANGO_CM
 # una simulación Monte Carlo de las trayectorias que cruzan cada vóxel de la ROI
 # (../scatter/mapa_hit_count_3d.npy, proyectada en X-Y y normalizada a 1 en el centro), así que
 # depende solo de la geometría del hodoscopio y vale para cualquier toma.
-# Por qué 0.4: el ruido por píxel crece como 1/sqrt(RED) (1.6 veces el del centro en 0.4, igual
-# a lo medido); en los datos reales con V16, el hierro falso de las mallas pasa de ~0% (RED >= 0.4)
-# a 23-37% (RED < 0.4).
+# Por qué ~0.35-0.4: el ruido por píxel crece como 1/sqrt(RED) (1.7 veces el del centro en 0.35,
+# igual a lo medido); en los datos reales con V16, el hierro falso de las mallas sube a 23-41% por
+# debajo de RED ~ 0.3-0.4 (figura 04).
 # exceso_detector y senal_barra_referencia se siguen usando en el ajuste rígido (bandas del detector).
 
 RED_PATH = "calibracion/densidad_relativa_eventos_xy.npy"
-RED_MINIMA = 0.4
+RED_MINIMA = 0.35
 DIAMETRO_REFERENCIA_CM = 2.0
 CONCRETO_T = 21 * 2.0 / 26.6          # Mallado: 21 cm de concreto de 2.0 g/cm3 (∫dl/X0)
 X0_HIERRO_CM, INV_X0_CONCRETO_CM = 1.757, 2.0 / 26.6

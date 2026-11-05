@@ -30,13 +30,14 @@ TRANSPONER = True
 # Umbral de la probabilidad de hierro (contorno rojo): el calibrado en el conjunto de prueba
 # (evaluar_test.py lo guarda en iron_threshold.json); 0.5 si no existe
 UMBRAL_HIERRO = 0.5
-# Zona poco confiable del detector (confiabilidad.py: bandas del detector y pocos muones) rayada
+# Zona poco confiable del detector (confiabilidad.py: RED < RED_MINIMA): se atenúa en gris con un
+# borde difuso (de RED_MINIMA a RED_MINIMA - ATENUACION_ANCHO) y se marca su límite con una línea
 MOSTRAR_CONFIABILIDAD = True
 # Guías de la geometría estimada encima de los mapas: apagadas en las figuras de la tesis
 # (sesgan al lector); se siguen usando para las métricas
 MOSTRAR_GUIA = False
-matplotlib.rcParams['hatch.color'] = '0.8'
-matplotlib.rcParams['hatch.linewidth'] = 0.5
+ATENUACION_ANCHO = 0.08
+ATENUACION_MAXIMA = 0.7
 
 # ==============================================================================
 # GEOMETRÍA ESTIMADA (cm). Solo para dibujar encima de las predicciones: no se usa en el entrenamiento.
@@ -118,6 +119,12 @@ def zona_poco_confiable(forma):
         _POCO_CONFIABLE = ~mapa_confiable(forma)
     return _POCO_CONFIABLE
 
+def atenuacion(forma):
+    # Opacidad del velo gris: 0 dentro de la zona confiable, sube suave fuera de ella
+    from confiabilidad import densidad_relativa, RED_MINIMA
+    red = densidad_relativa()
+    return ATENUACION_MAXIMA * np.clip((RED_MINIMA - red) / ATENUACION_ANCHO, 0.0, 1.0)
+
 def show_map(ax, mapa, tipo, vmin, vmax, titulo, geometria):
     # Los mapas están indexados [x, y] del detector; ver TRANSPONER
     cmap, log, etiqueta = TIPOS_MAPA[tipo]
@@ -139,10 +146,15 @@ def show_map(ax, mapa, tipo, vmin, vmax, titulo, geometria):
         ax.contour(centros, centros, imagen, levels=[UMBRAL_HIERRO if tipo == 'prob' else 0.5],
                    colors='tab:red', linewidths=0.8)
     if MOSTRAR_CONFIABILIDAD:
+        alfa = atenuacion(mapa.shape)
+        alfa = alfa if TRANSPONER else alfa.T
+        velo = np.zeros(alfa.shape + (4,))
+        velo[..., :3] = 0.55
+        velo[..., 3] = alfa
+        ax.imshow(velo, origin='lower', extent=[0, lado_cm, 0, lado_cm], interpolation='bilinear')
         poco = zona_poco_confiable(mapa.shape).astype(float)
         poco = poco if TRANSPONER else poco.T
-        ax.contourf(centros, centros, poco, levels=[0.5, 1.5], colors='none', hatches=['////'])
-        ax.contour(centros, centros, poco, levels=[0.5], colors='0.8', linewidths=0.6, linestyles=':')
+        ax.contour(centros, centros, poco, levels=[0.5], colors='white', linewidths=1.0)
     ax.set_xlim(*LIMITES_CM)
     ax.set_ylim(*LIMITES_CM)
     ax.set_title(titulo, fontsize=10)

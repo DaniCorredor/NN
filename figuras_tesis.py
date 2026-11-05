@@ -90,11 +90,11 @@ def estadistica_por_red(red):
     return salida
 
 def figura_confiabilidad(path):
-    # 1) RED (Monte Carlo) con el umbral; 2) ruido medido vs RED con 1/sqrt(RED); 3) hierro falso vs RED
+    # 1) RED (Monte Carlo) con el umbral; 2) ruido medido vs RED con 1/sqrt(RED)
     red = cf.densidad_relativa()
     centros = 0.5 * (BINS_RED[:-1] + BINS_RED[1:])
     datos = estadistica_por_red(red)
-    fig, axes = plt.subplots(1, 3, figsize=(19, 5.2))
+    fig, axes = plt.subplots(1, 2, figsize=(13, 5.2))
     inf.TIPOS_MAPA['red'] = ('inferno', False, 'Relative event density')
     inf.show_map(axes[0], red, 'red', 0.0, 1.0, "Relative event density", [])
     axes[0].contour((np.arange(112) + 0.5) * inf.VOXEL_CM, (np.arange(112) + 0.5) * inf.VOXEL_CM,
@@ -105,9 +105,7 @@ def figura_confiabilidad(path):
     for muestra, (ruido, falso) in datos.items():
         nombre = inf.NOMBRES_TESIS.get(muestra, muestra)
         axes[1].plot(centros, ruido, 'o-', color=colores[muestra], label=nombre)
-        axes[2].plot(centros, 100 * falso, 'o-', color=colores[muestra], label=nombre)
-    for ax, titulo, etiqueta in [(axes[1], "Noise vs relative event density", "Noise relative to centre"),
-                                 (axes[2], "False iron vs relative event density", "Pixels flagged as iron [%]")]:
+    for ax, titulo, etiqueta in [(axes[1], "Noise vs relative event density", "Noise relative to centre")]:
         ax.axvline(cf.RED_MINIMA, color='cyan', lw=1.5, label=f'Threshold RED = {cf.RED_MINIMA:g}')
         ax.set_xlabel("Relative event density")
         ax.set_ylabel(etiqueta)
