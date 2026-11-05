@@ -19,7 +19,10 @@ from data_generator import PEDESTAL, VOXEL_CM, limites_normalizacion, normalizar
 
 # Figuras en inglés (tesis). Mapas de varianza en "average scattering density" = varianza / tamaño
 # del vóxel proyectado (0.5 cm), en escala logarítmica; densidad y probabilidad en escala lineal.
-LIMITES_CM = (4, 56)
+# Ventana de las figuras: 52 cm centrados en el centro del detector y de la aceptancia (28 cm)
+LIMITES_CM = (2, 54)
+# True: fuera de la zona confiable los mapas valen 0 y la ventana se recorta a esa zona
+RECORTAR_A_CONFIABLE = False
 # Escala fija (logarítmica) de la average scattering density medida en todas las figuras
 ESCALA_ENTRADA_ASD = (0.8e-3, 1.28e-2)
 # Las coordenadas de los mapas son las de la voxelización (x = primer índice). TRANSPONER = True
@@ -119,6 +122,12 @@ def zona_poco_confiable(forma):
         _POCO_CONFIABLE = ~mapa_confiable(forma)
     return _POCO_CONFIABLE
 
+def limites_confiables():
+    # Ventana cuadrada que contiene la zona confiable (centrada en el centro del detector)
+    confiable = ~zona_poco_confiable((112, 112))
+    filas = np.where(confiable.any(axis=1))[0]
+    return filas[0] * VOXEL_CM, (filas[-1] + 1) * VOXEL_CM
+
 def atenuacion(forma):
     # Opacidad del velo gris: 0 dentro de la zona confiable, sube suave fuera de ella
     from confiabilidad import densidad_relativa, RED_MINIMA
@@ -129,6 +138,8 @@ def show_map(ax, mapa, tipo, vmin, vmax, titulo, geometria):
     # Los mapas están indexados [x, y] del detector; ver TRANSPONER
     cmap, log, etiqueta = TIPOS_MAPA[tipo]
     lado_cm = mapa.shape[0] * VOXEL_CM
+    if RECORTAR_A_CONFIABLE:
+        mapa = np.where(zona_poco_confiable(mapa.shape), 0.0, mapa)
     imagen = mapa if TRANSPONER else mapa.T
     norma = LogNorm(vmin=vmin, vmax=vmax) if log else None
     im = ax.imshow(np.clip(imagen, vmin, None) if log else imagen, origin='lower', cmap=cmap, norm=norma,
@@ -145,7 +156,7 @@ def show_map(ax, mapa, tipo, vmin, vmax, titulo, geometria):
     if tipo in ('prob', 'freq'):
         ax.contour(centros, centros, imagen, levels=[UMBRAL_HIERRO if tipo == 'prob' else 0.5],
                    colors='tab:red', linewidths=0.8)
-    if MOSTRAR_CONFIABILIDAD:
+    if MOSTRAR_CONFIABILIDAD and not RECORTAR_A_CONFIABLE:
         alfa = atenuacion(mapa.shape)
         alfa = alfa if TRANSPONER else alfa.T
         velo = np.zeros(alfa.shape + (4,))
@@ -155,8 +166,9 @@ def show_map(ax, mapa, tipo, vmin, vmax, titulo, geometria):
         poco = zona_poco_confiable(mapa.shape).astype(float)
         poco = poco if TRANSPONER else poco.T
         ax.contour(centros, centros, poco, levels=[0.5], colors='white', linewidths=1.0)
-    ax.set_xlim(*LIMITES_CM)
-    ax.set_ylim(*LIMITES_CM)
+    limites = limites_confiables() if RECORTAR_A_CONFIABLE else LIMITES_CM
+    ax.set_xlim(*limites)
+    ax.set_ylim(*limites)
     ax.set_title(titulo, fontsize=10)
     ax.set_xlabel("X (cm)")
     ax.set_ylabel("Y (cm)")

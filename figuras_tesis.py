@@ -3,6 +3,7 @@ import re
 import csv
 import glob
 import json
+import shutil
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
@@ -25,7 +26,8 @@ from train_Unet_2 import plot_loss_curves
 
 VERSION = "V16"
 POST = f"resultados/{VERSION}/postprocessing"
-DESTINO = f"resultados/{VERSION}/thesis_figures"
+DESTINO_PRINCIPAL = f"resultados/{VERSION}/thesis_figures"
+DESTINO_RECORTADO = f"resultados/{VERSION}/thesis_figures_2"   # solo la zona confiable, resto = 0
 TOMAS = {"Mallado_arena_20d": "21.6d", "Mallado_mortero_20d": "18.9d", "Grosores_mortero_20d": "20.6d"}
 ETIQUETA_CLASICA = "Measured ASD"
 
@@ -54,57 +56,49 @@ def clasicos_de_muestra(muestra):
         anterior, dias_ant = largos, dias
     return mapas
 
-def curvas():
+def curvas(DESTINO):
     with open(f"checkpoints/{VERSION}/historial.csv") as f:
         historial = [{k: float(v) for k, v in fila.items()} for fila in csv.DictReader(f)]
     mejor = int(min(historial, key=lambda h: h['val_total'])['epoca'])
     plot_loss_curves(historial, mejor, os.path.join(DESTINO, "01_training_validation_curves.png"))
 
 BINS_RED = np.arange(0.2, 1.0001, 0.1)
+MUESTRA_RUIDO = "Grosores_mortero_20d"
 
-def estadistica_por_red(red):
-    # Por rango de RED, dentro del bloque y lejos de la geometría estimada (solo para evaluar, no se
-    # dibuja): ruido de la media recortada relativo al centro y fracción marcada como hierro por V16
-    from scipy.ndimage import binary_dilation, gaussian_filter
-    c = (np.arange(112) + 0.5) * inf.VOXEL_CM
-    X, Y = np.meshgrid(c, c, indexing="ij")
-    salida = {}
-    for muestra, dias in TOMAS.items():
-        guia = np.zeros((112, 112), bool)
-        for r in inf.geometria_de(muestra):
-            guia |= (X >= r['x'][0]) & (X <= r['x'][1]) & (Y >= r['y'][0]) & (Y <= r['y'][1])
-        lejos = ~binary_dilation(guia, iterations=4)
-        dens = np.load(f"resultados/{VERSION}/{muestra}_{dias}_density_clean.npy")
-        hierro = np.load(f"resultados/{VERSION}/{muestra}_{dias}_iron_probability.npy") > inf.UMBRAL_HIERRO
-        v = np.load(f"datos_reales/{muestra}_{dias}_varrec_xy.npy")
-        bloque = gaussian_filter(dens, 4) > 0.3 * np.median(dens[dens > 0.3])
-        fino = v - gaussian_filter(v, 3)
-        zona = bloque & lejos
-        ruido_centro = fino[zona & (red >= 0.8)].std()
-        ruido, falso = [], []
-        for a, b in zip(BINS_RED[:-1], BINS_RED[1:]):
-            sel = zona & (red >= a) & (red < b)
-            ruido.append(fino[sel].std() / ruido_centro if sel.sum() > 30 else np.nan)
-            falso.append(hierro[sel].mean() if sel.sum() > 30 else np.nan)
-        salida[muestra] = (np.array(ruido), np.array(falso))
-    return salida
+def ruido_por_red(red):
+    # Ruido de la medida por rango de RED, SIN suavizar: dos intervalos independientes de la misma
+    # muestra (sin muones en común, ~7 días cada uno) miden lo mismo, así que su diferencia píxel a
+    # píxel es solo ruido. ruido = std(A - B) / sqrt(2), dentro del bloque, relativo al centro
+    # (RED >= 0.8); se promedian los 3 pares de intervalos de M2.
+    nombres = sorted(glob.glob(f"datos_reales/{MUESTRA_RUIDO}_int_*_varrec_xy.npy"))
+    mapas = [np.load(n) for n in nombres]
+    dens = np.load(f"resultados/{VERSION}/{MUESTRA_RUIDO}_{TOMAS[MUESTRA_RUIDO]}_density_clean.npy")
+    bloque = dens > 0.5 * np.median(dens[dens > 0.3])
+    curvas_par = []
+    for a in range(len(mapas)):
+        for b in range(a + 1, len(mapas)):
+            dif = (mapas[a] - mapas[b]) / np.sqrt(2)
+            centro = dif[bloque & (red >= 0.8)].std()
+            curvas_par.append([dif[bloque & (red >= lo) & (red < hi)].std() / centro
+                               if (bloque & (red >= lo) & (red < hi)).sum() > 30 else np.nan
+                               for lo, hi in zip(BINS_RED[:-1], BINS_RED[1:])])
+    curvas_par = np.array(curvas_par)
+    return np.nanmean(curvas_par, axis=0), np.nanstd(curvas_par, axis=0)
 
 def figura_confiabilidad(path):
     # 1) RED (Monte Carlo) con el umbral; 2) ruido medido vs RED con 1/sqrt(RED)
     red = cf.densidad_relativa()
     centros = 0.5 * (BINS_RED[:-1] + BINS_RED[1:])
-    datos = estadistica_por_red(red)
+    ruido, dispersion = ruido_por_red(red)
     fig, axes = plt.subplots(1, 2, figsize=(13, 5.2))
     inf.TIPOS_MAPA['red'] = ('inferno', False, 'Relative event density')
     inf.show_map(axes[0], red, 'red', 0.0, 1.0, "Relative event density", [])
     axes[0].contour((np.arange(112) + 0.5) * inf.VOXEL_CM, (np.arange(112) + 0.5) * inf.VOXEL_CM,
                     red if inf.TRANSPONER else red.T, levels=[cf.RED_MINIMA], colors='cyan', linewidths=1.5)
-    colores = {'Mallado_arena_20d': 'tab:orange', 'Mallado_mortero_20d': 'tab:blue', 'Grosores_mortero_20d': 'tab:green'}
     r = np.linspace(0.2, 1.0, 100)
-    axes[1].plot(r, 1 / np.sqrt(r), 'k--', label='$1/\\sqrt{RED}$')
-    for muestra, (ruido, falso) in datos.items():
-        nombre = inf.NOMBRES_TESIS.get(muestra, muestra)
-        axes[1].plot(centros, ruido, 'o-', color=colores[muestra], label=nombre)
+    axes[1].plot(r, 1 / np.sqrt(r), 'k--', label='$1/\\sqrt{RED}$ (muon statistics)')
+    axes[1].errorbar(centros, ruido, yerr=dispersion, fmt='o-', color='tab:green', capsize=3,
+                     label=f"{inf.NOMBRES_TESIS[MUESTRA_RUIDO]}: independent intervals")
     for ax, titulo, etiqueta in [(axes[1], "Noise vs relative event density", "Noise relative to centre")]:
         ax.axvline(cf.RED_MINIMA, color='cyan', lw=1.5, label=f'Threshold RED = {cf.RED_MINIMA:g}')
         ax.set_xlabel("Relative event density")
@@ -124,12 +118,18 @@ def leer_barras(path):
                         float(r['diameter_cm']) / 2]) for r in filas]
     return barras, np.array([float(r['significance_sigma']) for r in filas])
 
-if __name__ == "__main__":
+def generar(DESTINO, recortar):
+    inf.RECORTAR_A_CONFIABLE = recortar
     os.makedirs(DESTINO, exist_ok=True)
     with open(f"resultados/{VERSION}/test_evaluation/iron_threshold.json") as f:
         inf.UMBRAL_HIERRO = json.load(f)["iron_threshold"]
-    curvas()
+    curvas(DESTINO)
+    inf.RECORTAR_A_CONFIABLE = False          # la figura 04 explica la zona: siempre completa
     figura_confiabilidad(os.path.join(DESTINO, "04_reliability_map.png"))
+    inf.RECORTAR_A_CONFIABLE = recortar
+    for extra in ("02_test_metrics_per_scene.png", "03_test_examples.png"):
+        if DESTINO != DESTINO_PRINCIPAL:
+            shutil.copy(os.path.join(DESTINO_PRINCIPAL, extra), os.path.join(DESTINO, extra))
     model, device = inf.cargar_modelo(f"modelos/{VERSION}_fp16.pt")
     for muestra, dias in TOMAS.items():
         base = f"{muestra}_{dias}"
@@ -176,3 +176,7 @@ if __name__ == "__main__":
             w.writerows(filas_csv)
         print(muestra, "ok", flush=True)
     print(f"Figuras en {DESTINO}")
+
+if __name__ == "__main__":
+    generar(DESTINO_PRINCIPAL, recortar=False)
+    generar(DESTINO_RECORTADO, recortar=True)
