@@ -63,17 +63,17 @@ def curvas(DESTINO):
     plot_loss_curves(historial, mejor, os.path.join(DESTINO, "01_training_validation_curves.png"))
 
 BINS_RED = np.arange(0.2, 1.0001, 0.1)
-MUESTRA_RUIDO = "Grosores_mortero_20d"
+COLORES = {"Mallado_arena_20d": "tab:orange", "Mallado_mortero_20d": "tab:blue", "Grosores_mortero_20d": "tab:green"}
 
-def ruido_por_red(red):
+def ruido_por_red(red, muestra):
     # Ruido de la medida por rango de RED, SIN suavizar: dos intervalos independientes de la misma
     # muestra (sin muones en común, ~7 días cada uno) miden lo mismo, así que su diferencia píxel a
     # píxel es solo ruido. ruido = std(A - B) / sqrt(2), dentro del bloque, relativo al centro
-    # (RED >= 0.8); se promedian los 3 pares de intervalos de M2.
-    nombres = sorted(glob.glob(f"datos_reales/{MUESTRA_RUIDO}_int_*_varrec_xy.npy"))
+    # (RED >= 0.8); se promedian todos los pares de intervalos de la muestra.
+    nombres = sorted(glob.glob(f"datos_reales/{muestra}_int_*_varrec_xy.npy"))
     mapas = [np.load(n) for n in nombres]
-    dens = np.load(f"resultados/{VERSION}/{MUESTRA_RUIDO}_{TOMAS[MUESTRA_RUIDO]}_density_clean.npy")
-    bloque = dens > 0.5 * np.median(dens[dens > 0.3])
+    dens = np.load(f"resultados/{VERSION}/{muestra}_{TOMAS[muestra]}_density_clean.npy")
+    bloque = dens > 0.3 * np.median(dens[dens > 0.3])
     curvas_par = []
     for a in range(len(mapas)):
         for b in range(a + 1, len(mapas)):
@@ -89,7 +89,6 @@ def figura_confiabilidad(path):
     # 1) RED (Monte Carlo) con el umbral; 2) ruido medido vs RED con 1/sqrt(RED)
     red = cf.densidad_relativa()
     centros = 0.5 * (BINS_RED[:-1] + BINS_RED[1:])
-    ruido, dispersion = ruido_por_red(red)
     fig, axes = plt.subplots(1, 2, figsize=(13, 5.2))
     inf.TIPOS_MAPA['red'] = ('inferno', False, 'Relative event density')
     inf.show_map(axes[0], red, 'red', 0.0, 1.0, "Relative event density", [])
@@ -97,8 +96,10 @@ def figura_confiabilidad(path):
                     red if inf.TRANSPONER else red.T, levels=[cf.RED_MINIMA], colors='cyan', linewidths=1.5)
     r = np.linspace(0.2, 1.0, 100)
     axes[1].plot(r, 1 / np.sqrt(r), 'k--', label='$1/\\sqrt{RED}$ (muon statistics)')
-    axes[1].errorbar(centros, ruido, yerr=dispersion, fmt='o-', color='tab:green', capsize=3,
-                     label=f"{inf.NOMBRES_TESIS[MUESTRA_RUIDO]}: independent intervals")
+    for muestra in TOMAS:
+        ruido, dispersion = ruido_por_red(red, muestra)
+        axes[1].errorbar(centros, ruido, yerr=dispersion, fmt='o-', color=COLORES[muestra], capsize=3,
+                         label=inf.NOMBRES_TESIS[muestra])
     for ax, titulo, etiqueta in [(axes[1], "Noise vs relative event density", "Noise relative to centre")]:
         ax.axvline(cf.RED_MINIMA, color='cyan', lw=1.5, label=f'Threshold RED = {cf.RED_MINIMA:g}')
         ax.set_xlabel("Relative event density")
