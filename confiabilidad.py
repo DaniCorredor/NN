@@ -1,23 +1,23 @@
 import numpy as np
 from scipy.ndimage import gaussian_filter
 
-from data_generator import (ACEPTANCIA_PATH, EXCESO_BORDES_PATH, FACTOR_HIERRO, PSF_SIGMA_RANGO_CM, VOXEL_CM,
-                            detector_response)
+from data_generator import EXCESO_BORDES_PATH, FACTOR_HIERRO, PSF_SIGMA_RANGO_CM, VOXEL_CM, detector_response
 
-# Mapa de confiabilidad (coordenadas del detector, fijo para todas las tomas). Un píxel es poco
-# confiable si:
-#   1. el exceso que agrega el detector (bandas en y ~ 10 y y > 49.5 cm, subida hacia x = 0;
-#      calibrar_bordes.py) supera la mitad de la señal de una barra de Ø2 cm en el concreto de las
-#      muestras: ahí una banda del detector se confunde con una barra (V15/V16 marcaban hierro ahí);
-#   2. o en 20 días llegan menos de MUONES_MINIMOS muones (bordes de la aceptancia).
-# El criterio no usa las muestras: solo la calibración del detector y la respuesta simulada.
+# Mapa de confiabilidad (coordenadas del detector, fijo para todas las tomas): se muestran los
+# resultados solo donde la densidad relativa de eventos (RED) es al menos RED_MINIMA. La RED sale de
+# una simulación Monte Carlo de las trayectorias que cruzan cada vóxel de la ROI
+# (../scatter/mapa_hit_count_3d.npy, proyectada en X-Y y normalizada a 1 en el centro), así que
+# depende solo de la geometría del hodoscopio y vale para cualquier toma.
+# Por qué 0.4: el ruido por píxel crece como 1/sqrt(RED) (1.6 veces el del centro en 0.4, igual
+# a lo medido); en los datos reales con V16, el hierro falso de las mallas pasa de ~0% (RED >= 0.4)
+# a 23-37% (RED < 0.4).
+# exceso_detector y senal_barra_referencia se siguen usando en el ajuste rígido (bandas del detector).
 
+RED_PATH = "calibracion/densidad_relativa_eventos_xy.npy"
+RED_MINIMA = 0.4
 DIAMETRO_REFERENCIA_CM = 2.0
 CONCRETO_T = 21 * 2.0 / 26.6          # Mallado: 21 cm de concreto de 2.0 g/cm3 (∫dl/X0)
 X0_HIERRO_CM, INV_X0_CONCRETO_CM = 1.757, 2.0 / 26.6
-FRACCION_SENAL = 0.5
-DIAS_REFERENCIA = 20.0
-MUONES_MINIMOS = 20
 
 def senal_barra_referencia():
     # Pico de varianza (escala de la media) de una barra de Ø2 cm dentro del concreto, con el
@@ -39,41 +39,16 @@ def exceso_detector(forma=(112, 112)):
             p["aT"] / (1 + np.exp(-(y - p["yT"]) / p["wT"])))
     return en_x[:, None] + en_y[None, :]
 
+def densidad_relativa():
+    return np.load(RED_PATH)
+
 def mapa_confiable(forma=(112, 112)):
     # True donde la salida de la red (y el ajuste rígido) es confiable
-    banda = exceso_detector(forma) > FRACCION_SENAL * senal_barra_referencia()
-    pocos_muones = np.load(ACEPTANCIA_PATH) * DIAS_REFERENCIA < MUONES_MINIMOS
-    return ~(banda | pocos_muones)
-
-def figura(path):
-    # Figura para la tesis (orientación de inference_unet_2_real.TRANSPONER)
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    import inference_unet_2_real as inf
-    exceso = exceso_detector()
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-    inf.TIPOS_MAPA['excess'] = ('magma', False, 'Detector excess variance [rad$^2$]')
-    inf.show_map(axes[0], exceso, 'excess', 0.0, float(np.percentile(exceso, 99)),
-                 "Detector excess (empty hodoscope + air regions)", [])
-    inf.TIPOS_MAPA['ok'] = ('Greens', False, 'Reliable (1) / reduced reliability (0)')
-    inf.show_map(axes[1], mapa_confiable().astype(float), 'ok', 0.0, 1.0,
-                 f"Reliable zone: excess < {FRACCION_SENAL:g} × Ø{DIAMETRO_REFERENCIA_CM:g} cm bar signal", [])
-    plt.tight_layout()
-    plt.savefig(path, dpi=150, bbox_inches='tight')
-    plt.close()
+    return densidad_relativa() >= RED_MINIMA
 
 if __name__ == "__main__":
-    import os
-    os.makedirs("resultados/V16/postprocessing", exist_ok=True)
-    figura("resultados/V16/postprocessing/reliability_map.png")
-    s = senal_barra_referencia()
+    red = densidad_relativa()
     m = mapa_confiable()
     c = (np.arange(112) + 0.5) * VOXEL_CM
-    print(f"Señal de una barra de Ø2 cm: {s:.2e} rad^2 (umbral del exceso: {FRACCION_SENAL * s:.2e})")
-    print(f"Fracción confiable del detector: {m.mean():.2f}")
-    print("Confiable en y (x = 30 cm):", "".join("#" if v else "." for v in m[60, ::2]))
-    print("Confiable en x (y = 30 cm):", "".join("#" if v else "." for v in m[::2, 60]))
-    filas = np.where(m.any(axis=1))[0]
-    cols = np.where(m[60])[0]
-    print(f"x confiable desde {c[filas[0]]:.1f} cm; en y = 30 cm, y confiable {c[cols[0]]:.1f}-{c[cols[-1]]:.1f} cm")
+    cols = np.where(m[56])[0]
+    print(f"RED >= {RED_MINIMA}: {m.mean():.2f} del detector; en el centro, de {c[cols[0]]:.1f} a {c[cols[-1]]:.1f} cm")

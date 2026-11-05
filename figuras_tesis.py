@@ -11,7 +11,6 @@ import matplotlib.pyplot as plt
 import inference_unet_2_real as inf
 import ajuste_barras as aj
 import bootstrap_muones as bs
-import calibrar_bordes as cb
 import confiabilidad as cf
 from preparar_recortada import ARCHIVOS_POR_DIA, DATOS, PATRON
 from train_Unet_2 import plot_loss_curves
@@ -28,7 +27,7 @@ VERSION = "V16"
 POST = f"resultados/{VERSION}/postprocessing"
 DESTINO = f"resultados/{VERSION}/thesis_figures"
 TOMAS = {"Mallado_arena_20d": "21.6d", "Mallado_mortero_20d": "18.9d", "Grosores_mortero_20d": "20.6d"}
-ETIQUETA_CLASICA = "Measured (classic estimator)"
+ETIQUETA_CLASICA = "Measured ASD"
 
 def mapa_clasico(vt, desde=None):
     # Media de theta^2 por vóxel (solo los muones nuevos si se da 'desde'), promedio en z con vacíos = 0 [rad^2]
@@ -61,38 +60,61 @@ def curvas():
     mejor = int(min(historial, key=lambda h: h['val_total'])['epoca'])
     plot_loss_curves(historial, mejor, os.path.join(DESTINO, "01_training_validation_curves.png"))
 
+BINS_RED = np.arange(0.2, 1.0001, 0.1)
+
+def estadistica_por_red(red):
+    # Por rango de RED, dentro del bloque y lejos de la geometría estimada (solo para evaluar, no se
+    # dibuja): ruido de la media recortada relativo al centro y fracción marcada como hierro por V16
+    from scipy.ndimage import binary_dilation, gaussian_filter
+    c = (np.arange(112) + 0.5) * inf.VOXEL_CM
+    X, Y = np.meshgrid(c, c, indexing="ij")
+    salida = {}
+    for muestra, dias in TOMAS.items():
+        guia = np.zeros((112, 112), bool)
+        for r in inf.geometria_de(muestra):
+            guia |= (X >= r['x'][0]) & (X <= r['x'][1]) & (Y >= r['y'][0]) & (Y <= r['y'][1])
+        lejos = ~binary_dilation(guia, iterations=4)
+        dens = np.load(f"resultados/{VERSION}/{muestra}_{dias}_density_clean.npy")
+        hierro = np.load(f"resultados/{VERSION}/{muestra}_{dias}_iron_probability.npy") > inf.UMBRAL_HIERRO
+        v = np.load(f"datos_reales/{muestra}_{dias}_varrec_xy.npy")
+        bloque = gaussian_filter(dens, 4) > 0.3 * np.median(dens[dens > 0.3])
+        fino = v - gaussian_filter(v, 3)
+        zona = bloque & lejos
+        ruido_centro = fino[zona & (red >= 0.8)].std()
+        ruido, falso = [], []
+        for a, b in zip(BINS_RED[:-1], BINS_RED[1:]):
+            sel = zona & (red >= a) & (red < b)
+            ruido.append(fino[sel].std() / ruido_centro if sel.sum() > 30 else np.nan)
+            falso.append(hierro[sel].mean() if sel.sum() > 30 else np.nan)
+        salida[muestra] = (np.array(ruido), np.array(falso))
+    return salida
+
 def figura_confiabilidad(path):
-    # 1) evidencia: perfil del exceso medido en aire (sin muestra) a lo largo del y del detector, con el
-    #    modelo ajustado; 2) modelo 2D del exceso; 3) zona confiable (exceso < mitad de la señal de Ø2 cm)
-    p = {k: float(v) for k, v in np.load(cb.EXCESO_BORDES_PATH).items()}
-    plomo, grosores = cb.voxel_data("plomo_bloques_84h"), cb.voxel_data("Grosores_mortero_20d")
-    fuentes = {"Empty hodoscope (16 h)": cb.perfil(cb.VACIO, [(14, 42)], 1),
-               "Lead run (air regions)": cb.perfil(plomo, [(21.5, 27), (39.5, 43)], 1),
-               "Thicknesses run (air regions)": cb.perfil(grosores, [(46, 55)], 1)}
-    fig, axes = plt.subplots(1, 3, figsize=(20, 5.2))
-    ax = axes[0]
-    for (nombre, (pos, exceso, error)), color in zip(fuentes.items(), ['k', 'tab:blue', 'tab:orange']):
-        ax.errorbar(pos, exceso * 1e3, yerr=error * 1e3, fmt='o', ms=3, color=color, alpha=0.7, label=nombre)
-    y = np.linspace(0, 56, 400)
-    ax.plot(y, cb.g_y(y, p["aB"], p["yB"], p["wB"], p["aT"], p["yT"], p["wT"]) * 1e3, 'r-', lw=2,
-            label='Fit: band + step')
-    umbral = cf.FRACCION_SENAL * cf.senal_barra_referencia()
-    ax.axhline(umbral * 1e3, color='green', ls='--', label=f'Threshold: ½ signal of a Ø{cf.DIAMETRO_REFERENCIA_CM:g} cm bar')
-    ax.axhline(0, color='0.5', lw=0.8)
-    ax.set_xlim(*inf.LIMITES_CM)
-    ax.set_ylim(-0.6, 1.8)
-    ax.set_xlabel("X (cm)")
-    ax.set_ylabel("Excess variance [10$^{-3}$ rad$^2$]")
-    ax.set_title("Detector excess without sample (profile across X)", fontsize=10)
-    ax.grid(True, ls='--', alpha=0.4)
-    ax.legend(fontsize=8)
-    exceso = cf.exceso_detector()
-    inf.TIPOS_MAPA['excess'] = ('magma', False, 'Detector excess variance [rad$^2$]')
-    inf.show_map(axes[1], exceso, 'excess', 0.0, float(np.percentile(exceso, 99)),
-                 "Fitted detector excess (band + step + ramp)", [])
-    inf.TIPOS_MAPA['ok'] = ('Greens', False, 'Reliable (1) / reduced reliability (0)')
-    inf.show_map(axes[2], cf.mapa_confiable().astype(float), 'ok', 0.0, 1.0,
-                 f"Reliable zone: excess < ½ Ø{cf.DIAMETRO_REFERENCIA_CM:g} cm bar signal, ≥ {cf.MUONES_MINIMOS} muons", [])
+    # 1) RED (Monte Carlo) con el umbral; 2) ruido medido vs RED con 1/sqrt(RED); 3) hierro falso vs RED
+    red = cf.densidad_relativa()
+    centros = 0.5 * (BINS_RED[:-1] + BINS_RED[1:])
+    datos = estadistica_por_red(red)
+    fig, axes = plt.subplots(1, 3, figsize=(19, 5.2))
+    inf.TIPOS_MAPA['red'] = ('inferno', False, 'Relative event density')
+    inf.show_map(axes[0], red, 'red', 0.0, 1.0, "Relative event density", [])
+    axes[0].contour((np.arange(112) + 0.5) * inf.VOXEL_CM, (np.arange(112) + 0.5) * inf.VOXEL_CM,
+                    red if inf.TRANSPONER else red.T, levels=[cf.RED_MINIMA], colors='cyan', linewidths=1.5)
+    colores = {'Mallado_arena_20d': 'tab:orange', 'Mallado_mortero_20d': 'tab:blue', 'Grosores_mortero_20d': 'tab:green'}
+    r = np.linspace(0.2, 1.0, 100)
+    axes[1].plot(r, 1 / np.sqrt(r), 'k--', label='$1/\\sqrt{RED}$')
+    for muestra, (ruido, falso) in datos.items():
+        nombre = inf.NOMBRES_TESIS.get(muestra, muestra)
+        axes[1].plot(centros, ruido, 'o-', color=colores[muestra], label=nombre)
+        axes[2].plot(centros, 100 * falso, 'o-', color=colores[muestra], label=nombre)
+    for ax, titulo, etiqueta in [(axes[1], "Noise vs relative event density", "Noise relative to centre"),
+                                 (axes[2], "False iron vs relative event density", "Pixels flagged as iron [%]")]:
+        ax.axvline(cf.RED_MINIMA, color='cyan', lw=1.5, label=f'Threshold RED = {cf.RED_MINIMA:g}')
+        ax.set_xlabel("Relative event density")
+        ax.set_ylabel(etiqueta)
+        ax.set_title(titulo, fontsize=10)
+        ax.grid(True, ls='--', alpha=0.4)
+        ax.legend(fontsize=8)
+    axes[1].set_ylim(0, 4)
     plt.tight_layout()
     plt.savefig(path, dpi=150, bbox_inches='tight')
     plt.close()
@@ -128,8 +150,7 @@ if __name__ == "__main__":
             filas.append({'etiqueta': f"days {float(a):g}-{float(b):g}", 'input': m, 'input_display': clasicos[nombre],
                           'var': v, 'dens': d, 'prob': p})
         inf.plot_tomas(muestra, filas, os.path.join(DESTINO, f"05_independent_intervals_{muestra}.png"),
-                       f"{inf.NOMBRES_TESIS.get(muestra, muestra)}: INDEPENDENT time intervals (no muon in common)",
-                       entrada=ETIQUETA_CLASICA)
+                       "", entrada=ETIQUETA_CLASICA)
 
         # 06: bootstrap (frecuencia e incertidumbre guardadas por bootstrap_muones.py)
         frecuencia = np.load(f"{POST}/bootstrap/{muestra}_detection_frequency.npy")
@@ -145,5 +166,15 @@ if __name__ == "__main__":
                    chi2_dof=ajuste.chi2(barras) / max(region.sum() - ajuste.n_fijas - 6 * len(barras), 1))
         aj.figura(muestra, medida, salida[2], res, f"{DESTINO}/07_{base}_rigid_fit.png",
                   mostrar=clasicos[base], etiqueta_entrada=ETIQUETA_CLASICA)
+        filas_csv = aj.tabla_barras(dict(res, errores=np.zeros((len(barras), 5)),
+                                         amplitud=ajuste.resolver(barras)[0][ajuste.n_fijas:]), cf.mapa_confiable())
+        with open(f"{POST}/rigid_fit/{base}_bars.csv") as f:
+            originales = list(csv.DictReader(f))
+        for fila, orig in zip(filas_csv, originales):   # errores y significancia del ajuste original
+            fila.update(diameter_err_cm=orig['diameter_err_cm'], significance_sigma=orig['significance_sigma'])
+        with open(f"{DESTINO}/07_{base}_bars.csv", "w", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=list(filas_csv[0].keys()))
+            w.writeheader()
+            w.writerows(filas_csv)
         print(muestra, "ok", flush=True)
     print(f"Figuras en {DESTINO}")

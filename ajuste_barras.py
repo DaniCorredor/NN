@@ -304,7 +304,7 @@ def tabla_barras(res, confiable):
 def modelo_rigido(res):
     return sum((cuerda_barra(*b) for b in res["barras"]), np.zeros((LADO, LADO)))
 
-def figura(nombre, medida, prob, res, path, mostrar=None, etiqueta_entrada="Measured (trimmed mean)"):
+def figura(nombre, medida, prob, res, path, mostrar=None, etiqueta_entrada="Measured ASD"):
     # mostrar (opcional): mapa que se dibuja como medida (p. ej. el estimador clásico de la tesis)
     geometria = inf.geometria_de(nombre)
     titulo = inf.NOMBRES_TESIS.get(nombre, nombre)
@@ -314,12 +314,12 @@ def figura(nombre, medida, prob, res, path, mostrar=None, etiqueta_entrada="Meas
     mapa_res[res["region"]] = residuo
     fig, axes = plt.subplots(1, 4, figsize=(24, 5))
     inf.show_map(axes[0], (medida if mostrar is None else mostrar) / VOXEL_CM, 'asd', *inf.ESCALA_ENTRADA_ASD,
-                 f"{etiqueta_entrada}: {titulo}", geometria)
-    inf.show_map(axes[1], prob, 'prob', 0.0, 1.0, f"Network: iron probability (red: p = {inf.UMBRAL_HIERRO:.2f})", geometria)
+                 etiqueta_entrada, geometria)
+    inf.show_map(axes[1], prob, 'prob', 0.0, 1.0, "Iron probability", geometria)
     rigido = modelo_rigido(res)
     inf.TIPOS_MAPA['rigid'] = ('bone_r', False, 'Projected iron thickness [cm]')
     inf.show_map(axes[2], rigido, 'rigid', 0.0, max(float(rigido.max()), 1.0),
-                 f"Rigid bar fit: {len(res['barras'])} bars ≥ {SIGMA_MINIMO:.2g}σ", geometria)
+                 "Rigid bar fit", geometria)
     for k, b in enumerate(res["barras"]):
         cx, cy = (b[0] + b[2]) / 2, (b[1] + b[3]) / 2
         if inf.TRANSPONER:
@@ -327,7 +327,7 @@ def figura(nombre, medida, prob, res, path, mostrar=None, etiqueta_entrada="Meas
         axes[2].text(cx, cy, str(k + 1), color='tab:red', fontsize=7, ha='center', va='center')
     inf.TIPOS_MAPA['resid'] = ('RdBu_r', False, 'Normalized residual')
     inf.show_map(axes[3], np.nan_to_num(mapa_res), 'resid', -3.0, 3.0,
-                 f"Residual (data − fit)/σ, χ²/dof = {res['chi2_dof']:.2f}", geometria)
+                 "Normalized residual", geometria)
     plt.tight_layout()
     plt.savefig(path, dpi=150, bbox_inches='tight')
     plt.close()

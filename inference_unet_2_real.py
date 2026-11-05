@@ -32,6 +32,9 @@ TRANSPONER = True
 UMBRAL_HIERRO = 0.5
 # Zona poco confiable del detector (confiabilidad.py: bandas del detector y pocos muones) rayada
 MOSTRAR_CONFIABILIDAD = True
+# Guías de la geometría estimada encima de los mapas: apagadas en las figuras de la tesis
+# (sesgan al lector); se siguen usando para las métricas
+MOSTRAR_GUIA = False
 matplotlib.rcParams['hatch.color'] = '0.8'
 matplotlib.rcParams['hatch.linewidth'] = 0.5
 
@@ -62,8 +65,9 @@ GEOMETRIAS = {
     "Grosores": _grosores(),
     "plomo": BLOQUES_PLOMO,
 }
-NOMBRES_TESIS = {"Mallado_mortero_20d": "Mesh (mortar)", "Mallado_arena_20d": "Mesh (sand)",
-                 "Grosores_mortero_20d": "Thicknesses (mortar)", "plomo_bloques_84h": "Lead blocks"}
+# Nombres de la tesis: M1 = malla (Mallado), M2 = grosores; el material (arena o concreto) va en el pie
+NOMBRES_TESIS = {"Mallado_mortero_20d": "$\\mathcal{M}_1$ (concrete)", "Mallado_arena_20d": "$\\mathcal{M}_1$ (sand)",
+                 "Grosores_mortero_20d": "$\\mathcal{M}_2$", "plomo_bloques_84h": "Lead blocks"}
 
 def geometria_de(nombre):
     for prefijo, geometria in GEOMETRIAS.items():
@@ -99,7 +103,7 @@ def unpad(tensor, padding):
 TIPOS_MAPA = {
     # clave: (cmap, escala log, etiqueta de la barra de color)
     'asd': ('inferno', True, 'Average Scattering Density [rad$^2$/cm]'),
-    'dens': ('viridis', False, '$\\int dl/X_0$'),
+    'dens': ('YlGnBu', False, '$\\int dl/X_0$'),
     'prob': ('gray', False, 'Iron probability'),
     'freq': ('gray', False, 'Detection frequency'),
     'std': ('cividis', False, 'Std. dev. of $\\int dl/X_0$'),
@@ -122,7 +126,7 @@ def show_map(ax, mapa, tipo, vmin, vmax, titulo, geometria):
     norma = LogNorm(vmin=vmin, vmax=vmax) if log else None
     im = ax.imshow(np.clip(imagen, vmin, None) if log else imagen, origin='lower', cmap=cmap, norm=norma,
                    vmin=None if log else vmin, vmax=None if log else vmax, extent=[0, lado_cm, 0, lado_cm])
-    for g in geometria:
+    for g in (geometria if MOSTRAR_GUIA else []):
         (x0, x1), (y0, y1) = g["x"], g["y"]
         if TRANSPONER:
             (x0, x1), (y0, y1) = (y0, y1), (x0, x1)
@@ -161,10 +165,9 @@ def plot_tomas(nombre_muestra, tomas, path, titulo, entrada='Measured (trimmed m
         # 'input_display' (opcional): mapa que se dibuja como medida en vez del que recibió la red
         show_map(axes[fila, 0], t.get('input_display', t['input']) / VOXEL_CM, 'asd', *esc_in,
                  f"{entrada}, {t['etiqueta']}", geometria)
-        show_map(axes[fila, 1], t['var'] / VOXEL_CM, 'asd', *esc_var, f"Network: enhanced ASD, {t['etiqueta']}", geometria)
-        show_map(axes[fila, 2], t['dens'], 'dens', 0.0, vmax_dens, f"Network: $\\int dl/X_0$, {t['etiqueta']}", geometria)
-        show_map(axes[fila, 3], t['prob'], 'prob', 0.0, 1.0, f"Network: iron probability, {t['etiqueta']}", geometria)
-    fig.suptitle(titulo)
+        show_map(axes[fila, 1], t['var'] / VOXEL_CM, 'asd', *esc_var, f"Enhanced ASD, {t['etiqueta']}", geometria)
+        show_map(axes[fila, 2], t['dens'], 'dens', 0.0, vmax_dens, f"$\\int dl/X_0$, {t['etiqueta']}", geometria)
+        show_map(axes[fila, 3], t['prob'], 'prob', 0.0, 1.0, f"Iron probability, {t['etiqueta']}", geometria)
     plt.tight_layout()
     plt.savefig(path, dpi=150, bbox_inches='tight')
     plt.close()
@@ -217,9 +220,9 @@ def guardar_resultado(output_folder, base, titulo, medida, var, dens, prob, geom
 
     fig, axes = plt.subplots(1, 4, figsize=(24, 5))
     show_map(axes[0], medida / VOXEL_CM, 'asd', *ESCALA_ENTRADA_ASD, f"{entrada}: {titulo}", geometria)
-    show_map(axes[1], var / VOXEL_CM, 'asd', *escala_asd([var / VOXEL_CM]), "Network: enhanced ASD (N → ∞)", geometria)
-    show_map(axes[2], dens, 'dens', 0.0, dens.max(), "Network: $\\int dl/X_0$ (PSF removed)", geometria)
-    show_map(axes[3], prob, 'prob', 0.0, 1.0, f"Network: iron probability (red: p = {UMBRAL_HIERRO:.2f})", geometria)
+    show_map(axes[1], var / VOXEL_CM, 'asd', *escala_asd([var / VOXEL_CM]), "Enhanced ASD", geometria)
+    show_map(axes[2], dens, 'dens', 0.0, dens.max(), "$\\int dl/X_0$", geometria)
+    show_map(axes[3], prob, 'prob', 0.0, 1.0, "Iron probability", geometria)
     plt.tight_layout()
     plt.savefig(os.path.join(output_folder, f"{base}_network.png"), dpi=150, bbox_inches='tight')
     plt.close()
