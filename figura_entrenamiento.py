@@ -17,7 +17,7 @@ import calibrar_respuesta as cr
 
 SALIDA = "resultados/V16/reunion"
 DIAS = 20.6
-REGION_CONCRETO = ((35, 41), (20, 40))     # Grosores sin barras (cm del detector)
+REGION_CONCRETO = ((15, 39), (30, 35))     # Grosores sin barras: la misma zona de calibrar_respuesta.py
 
 def escena_ejemplo(gen):
     # Bloque de concreto con una malla tipo M1 y una fila de barras de distinto grosor
