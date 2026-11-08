@@ -21,11 +21,11 @@ correr() {
     fi
 }
 
-correr "1/5 Generar dataset de prueba (~5 min; el de entrenamiento V11 se reutiliza)" data_generator.py         1_generar.log
+correr "1/5 Generar datasets (entrenamiento V17 + prueba Test_V17)" data_generator.py         1_generar.log
 correr "2/5 Entrenar (hasta ~5 h)"          train_Unet_2.py           2_entrenar.log
 correr "3/5 Evaluar en test"                evaluar_test.py           3_evaluar.log
 correr "4/5 Inferencia datos reales"        inference_unet_2_real.py  4_inferencia.log
 # Pesos en float16 (~74 MB) para poder subirlos a GitHub y analizarlos en el PC
 paso "INICIO  5/5 Exportar pesos"
-if python3 exportar_pesos.py V16 > logs/5_exportar.log 2>&1; then paso "OK      5/5 Exportar pesos"; else paso "ERROR   5/5 Exportar pesos (revisa logs/5_exportar.log)"; exit 1; fi
-paso "TERMINADO. Resultados en checkpoints/V16, resultados/V16 y modelos/V16_fp16.pt"
+if python3 exportar_pesos.py V17 > logs/5_exportar.log 2>&1; then paso "OK      5/5 Exportar pesos"; else paso "ERROR   5/5 Exportar pesos (revisa logs/5_exportar.log)"; exit 1; fi
+paso "TERMINADO. Resultados en checkpoints/V17, resultados/V17 y modelos/V17_fp16.pt"

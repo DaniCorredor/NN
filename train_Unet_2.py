@@ -212,7 +212,7 @@ def plot_loss_curves(historial, best_epoch, path):
     plt.savefig(path, dpi=150, bbox_inches='tight')
     plt.close()
 
-def pick_fixed_samples(dataset, tipos=('malla', 'malla', 'grosores', 'grosores', 'barras')):
+def pick_fixed_samples(dataset, tipos=('malla', 'malla', 'barras', 'barras', 'barras')):
     # Una muestra de validación por tipo de escena; siempre las mismas para ver la evolución
     elegidas = []
     for tipo in tipos:
@@ -415,8 +415,8 @@ def train_model(data_dir, output_dir="Checkpoints_V7_Denoiser", batch_size=16, e
             break
 
 if __name__ == "__main__":
-    DATA_DIR = "datasets/dataset_muografia_V11"
-    OUTPUT_DIR = "checkpoints/V16"
+    DATA_DIR = "datasets/dataset_muografia_V17"
+    OUTPUT_DIR = "checkpoints/V17"
     
     train_model(
         data_dir=DATA_DIR, 

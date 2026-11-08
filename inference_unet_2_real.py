@@ -399,8 +399,8 @@ def run_filtered_inference(input_folder, originales_folder, output_folder, model
 
 if __name__ == "__main__":
     INPUT_DIR = "datos_reales"   # salida de preparar_recortada.py
-    OUTPUT_DIR = "resultados/V16"
-    MODEL_PATH = "checkpoints/V16/best_model.pth"
+    OUTPUT_DIR = "resultados/V17"
+    MODEL_PATH = "checkpoints/V17/best_model.pth"
     umbral_path = os.path.join(OUTPUT_DIR, "test_evaluation", "iron_threshold.json")
     if os.path.exists(umbral_path):
         with open(umbral_path) as f:

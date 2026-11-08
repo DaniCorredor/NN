@@ -12,8 +12,8 @@ pgrep -af "correr_todo.sh|data_generator.py|train_Unet_2.py|evaluar_test.py|infe
 
 echo
 echo "===== DATASET ====="
-echo "Entrenamiento: $(ls datasets/dataset_muografia_V11 2>/dev/null | wc -l) / 10000"
-echo "Prueba:        $(ls datasets/dataset_muografia_Test_V13 2>/dev/null | wc -l) / 500"
+echo "Entrenamiento: $(ls datasets/dataset_muografia_V17 2>/dev/null | wc -l) / 10000"
+echo "Prueba:        $(ls datasets/dataset_muografia_Test_V17 2>/dev/null | wc -l) / 500"
 
 echo
 echo "===== ÚLTIMAS ÉPOCAS (máximo 200, se detiene antes si deja de mejorar) ====="

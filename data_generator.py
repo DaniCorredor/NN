@@ -39,6 +39,9 @@ ZENITH_HIST_PATH = "calibracion/zenith_hist.npz"
 # Contraste real de las barras / simulado: ~0.7 (Ø2 cm, Mallado) y 0.86 (Ø4-6 cm, Grosores);
 # con la respuesta recalibrada sigue siendo ~0.65-0.8 (efecto real de PoCA, no de la densidad)
 FACTOR_HIERRO = (0.55, 0.95)
+# V17: el factor ya NO se aplica al generar (el rango salió de M1 y M2, las muestras de evaluación).
+# FACTOR_HIERRO se conserva solo como estimación del contraste real en confiabilidad.py.
+USAR_FACTOR_HIERRO = False
 # El ancho del pico de las barras reales es compatible con PSF de 0.6 a 1.0 cm
 PSF_SIGMA_RANGO_CM = (0.6, 1.0)
 # Ruido del estimador: banco de medias recortadas de theta^2 por muón REAL (aire, concreto, plomo),
@@ -53,6 +56,7 @@ N_MAX_BANCO = 400
 # se sortean amplitud, posición y ancho de cada parte; x = 56 recibe un mínimo para no depender
 # de que un borde esté siempre limpio.
 EXCESO_BORDES_PATH = "calibracion/exceso_bordes.npz"
+USAR_EXCESO_BORDES = False  # V17: sin bandas; el archivo se conserva para ajuste_barras.py y confiabilidad.py
 EXCESO_ESCALA = (0.3, 2.0)
 EXCESO_ESCALA_ANCHO = (0.7, 1.4)
 EXCESO_DESPLAZAMIENTO_CM = 1.5
@@ -305,8 +309,9 @@ def agregar_ruido(varianza_limpia, aceptancia, rng=np.random, dias=None):
     redistribucion = np.clip(1.0 + rng.uniform(*REDISTRIBUCION_N) * contraste_local, 0.3, None)
     muones = rng.poisson(dias * aceptancia * redistribucion)
 
-    # Exceso de los bordes del detector (coordenadas del detector, no de la muestra)
-    varianza = varianza_limpia + exceso_bordes(varianza_limpia.shape, rng)
+    # Exceso de los bordes del detector (V15-V16). V17 no lo simula: los bordes se excluyen con la
+    # zona confiable (RED), así que la red no tiene que aprender las bandas
+    varianza = varianza_limpia + exceso_bordes(varianza_limpia.shape, rng) if USAR_EXCESO_BORDES else varianza_limpia
 
     # Material de cada píxel (para elegir el banco de ruido): se invierte la respuesta del detector
     T = (np.clip(varianza_limpia - PEDESTAL, 0.0, None) / RESPUESTA_A) ** (1.0 / RESPUESTA_GAMMA)
@@ -314,7 +319,8 @@ def agregar_ruido(varianza_limpia, aceptancia, rng=np.random, dias=None):
     return varianza_medida.astype(np.float32), muones, dias
 
 def get_enmallado_config():
-    n = lambda: np.random.randint(2, 7)
+    # Número de barras de cada dirección, independiente (V17: 2-8, antes 2-6); 25% en una sola dirección
+    n = lambda: np.random.randint(2, 9)
     if np.random.rand() < 0.25:
         return (n(), 0) if np.random.rand() < 0.5 else (0, n())
     return n(), n()
@@ -335,100 +341,74 @@ def sample_block(gen):
 def _random_point(bounds, margin):
     return np.array([np.random.uniform(lo + margin, hi - margin) for lo, hi in bounds])
 
-def _posiciones_irregulares(lo, hi, n, margen):
-    # n posiciones entre lo+margen y hi-margen: 40% regulares, 60% con huecos distintos (M1: 4, 6, 8, 10 cm)
+def _posiciones_irregulares(lo, hi, n, margenes):
+    # n posiciones entre lo+margen_inicial y hi-margen_final: 40% regulares, 60% con huecos distintos
+    # (V17: huecos que pueden diferir hasta 5 veces, antes 3.5)
+    m0, m1 = margenes
     if n == 1:
-        return [np.random.uniform(lo + margen, hi - margen)]
+        return [np.random.uniform(lo + m0, hi - m1)]
     if np.random.rand() < 0.4:
-        return list(np.linspace(lo + margen, hi - margen, n))
-    huecos = np.random.uniform(1.0, 3.5, n - 1)
-    return list(lo + margen + np.concatenate([[0], np.cumsum(huecos)]) / huecos.sum() * (hi - lo - 2 * margen))
+        return list(np.linspace(lo + m0, hi - m1, n))
+    huecos = np.random.uniform(1.0, 5.0, n - 1)
+    return list(lo + m0 + np.concatenate([[0], np.cumsum(huecos)]) / huecos.sum() * (hi - lo - m0 - m1))
 
 def add_rebar_mesh(gen, bounds):
-    # Malla tipo Mallado (M1): espaciado irregular, cada dirección con su diámetro (1-3 cm) y
-    # profundidad, profundidad que puede variar barra a barra, barras que sobresalen del bloque
-    # y alguna barra faltante
+    # Malla: cada dirección con su número de barras, diámetro (1-3 cm), profundidad, espaciado y
+    # márgenes; profundidad que puede variar barra a barra, barras que sobresalen del bloque o
+    # terminan dentro, y barras faltantes. V17 agrega diversidad sin cambiar la lógica: márgenes
+    # distintos a cada lado, diámetro variable barra a barra (30%), extremos distintos por barra
+    # (30%) y fracción de barras faltantes sorteada por dirección (0-20%).
     (x0, x1), (y0, y1), (z0, z1) = bounds
     for eje, n in enumerate(get_enmallado_config()):
         if n == 0:
             continue
-        r = np.random.uniform(0.5, 1.5) / VOXEL_CM
+        r_base = np.random.uniform(0.5, 1.5) / VOXEL_CM
+        varia_r = np.random.rand() < 0.3
         # eje 0: barras a lo largo de x, repartidas en y; eje 1: a lo largo de y, repartidas en x
         lo, hi = (y0, y1) if eje == 0 else (x0, x1)
         a0, a1 = (x0, x1) if eje == 0 else (y0, y1)
-        posiciones = _posiciones_irregulares(lo, hi, n, margen=np.random.uniform(2, 9) / VOXEL_CM)
-        z_base = np.random.uniform(z0 + r, z1 - r)
+        posiciones = _posiciones_irregulares(lo, hi, n, margenes=np.random.uniform(2, 9, 2) / VOXEL_CM)
+        z_base = np.random.uniform(z0 + r_base, z1 - r_base)
         dz = np.random.uniform(0, 8) / VOXEL_CM if np.random.rand() < 0.5 else 0.0
-        extremo = np.random.uniform(0, 5) / VOXEL_CM if np.random.rand() < 0.5 else -np.random.uniform(1, 4) / VOXEL_CM
+        sortear_extremo = lambda: (np.random.uniform(0, 5) if np.random.rand() < 0.5 else -np.random.uniform(1, 4)) / VOXEL_CM
+        extremo_comun = sortear_extremo()
+        extremos_por_barra = np.random.rand() < 0.3
+        faltantes = np.random.uniform(0.0, 0.2)
         for pos in posiciones:
-            if np.random.rand() < 0.1:
+            if np.random.rand() < faltantes:
                 continue
+            r = r_base * np.random.uniform(0.7, 1.3) if varia_r else r_base
+            e0, e1 = (sortear_extremo(), sortear_extremo()) if extremos_por_barra else (extremo_comun, extremo_comun)
             z = np.clip(z_base + np.random.uniform(-dz / 2, dz / 2), z0 + r, z1 - r)
             if eje == 0:
-                gen.add_bar((a0 - extremo, pos, z), (a1 + extremo, pos, z), r)
+                gen.add_bar((a0 - e0, pos, z), (a1 + e1, pos, z), r)
             else:
-                gen.add_bar((pos, a0 - extremo, z), (pos, a1 + extremo, z), r)
+                gen.add_bar((pos, a0 - e0, z), (pos, a1 + e1, z), r)
 
-def add_thickness_row(gen, bounds):
-    # Tipo Grosores (M2): fila de 2-5 barras paralelas, mismo largo (6-15 cm) y profundidad,
-    # diámetros distintos (1-6 cm); en 60% de los casos cada una sigue con un tubo vacío
-    (x0, x1), (y0, y1), (z0, z1) = bounds
-    eje = np.random.randint(2)
-    lo, hi = (y0, y1) if eje == 0 else (x0, x1)       # dirección en que se reparten
-    a0, a1 = (x0, x1) if eje == 0 else (y0, y1)       # dirección de las barras
-    radios = np.random.uniform(0.5, 3.0, np.random.randint(2, 6)) / VOXEL_CM
-    if np.random.rand() < 0.5:
-        radios = np.sort(radios)
-    largo = min(np.random.uniform(6, 15) / VOXEL_CM, 0.6 * (a1 - a0))
-    hueco = np.random.uniform(3, 7) / VOXEL_CM if np.random.rand() < 0.6 else 0.0
-    hueco = min(hueco, 0.3 * (a1 - a0))
-    inicio = np.random.uniform(a0 + 2 / VOXEL_CM, max(a0 + 2 / VOXEL_CM, a1 - largo - hueco - 2 / VOXEL_CM))
-    z = np.random.uniform(z0 + radios.max(), max(z0 + radios.max(), z1 - radios.max()))
-    pos = lo + np.random.uniform(2, 6) / VOXEL_CM
-    for r in radios:
-        pos += r
-        if pos + r > hi - 1 / VOXEL_CM:
-            break
-        p1, p2, p3 = inicio, inicio + largo, inicio + largo + hueco
-        if eje == 0:
-            gen.add_bar((p1, pos, z), (p2, pos, z), r)
-            if hueco > 0:
-                gen.add_bar((p2, pos, z), (p3, pos, z), r, material='air')
-        else:
-            gen.add_bar((pos, p1, z), (pos, p2, z), r)
-            if hueco > 0:
-                gen.add_bar((pos, p2, z), (pos, p3, z), r, material='air')
-        pos += r + np.random.uniform(4, 12) / VOXEL_CM
-
-def add_pvc_tubes(gen, bounds):
-    # Tubos vacíos de manipulación (ambas muestras reales los tienen): 1-2 a lo largo del bloque,
-    # cerca del fondo y de un borde
-    (x0, x1), (y0, y1), (z0, z1) = bounds
-    eje = np.random.randint(2)
-    lo, hi = (y0, y1) if eje == 0 else (x0, x1)
-    a0, a1 = (x0, x1) if eje == 0 else (y0, y1)
-    for lado in np.random.permutation([0, 1])[:np.random.randint(1, 3)]:
-        r = np.random.uniform(0.75, 1.5) / VOXEL_CM
-        d = np.random.uniform(2, 8) / VOXEL_CM
-        pos = lo + d if lado == 0 else hi - d
-        z = min(z0 + np.random.uniform(3, 7) / VOXEL_CM, z1 - r)
-        if eje == 0:
-            gen.add_bar((a0, pos, z), (a1, pos, z), r, material='air')
-        else:
-            gen.add_bar((pos, a0, z), (pos, a1, z), r, material='air')
+def _azimut():
+    # Mitad alineadas con x o y, mitad con azimut libre
+    return np.random.choice([0.0, np.pi / 2]) if np.random.rand() < 0.5 else np.random.uniform(0, np.pi)
 
 def add_isolated_bars(gen, bounds, n_bars):
-    # Barras sueltas: largo 5-40 cm, diámetro 1-6 cm; mitad alineadas con x o y,
-    # mitad con azimut libre; 30% inclinadas hasta +-15° respecto a la horizontal
+    # Barras sueltas: largo 5-40 cm, diámetro 1-6 cm, cada una con su posición; 30% inclinadas hasta
+    # +-15° respecto a la horizontal. V17 (reemplaza la fila tipo Grosores, que era una copia de M2):
+    # en la mitad de los grupos todas las barras son paralelas (mismo azimut) y, de esos, la mitad
+    # comparte profundidad, como una capa de refuerzo; diámetros, largos y posiciones siguen siendo
+    # independientes, así que no se fija ningún orden, separación ni largo común.
     lo = np.array([b[0] for b in bounds], float)
     hi = np.array([b[1] for b in bounds], float)
+    paralelas = np.random.rand() < 0.5
+    phi_comun = _azimut()
+    z_comun = np.random.uniform(lo[2], hi[2]) if paralelas and np.random.rand() < 0.5 else None
     for _ in range(n_bars):
         r = np.random.uniform(0.5, 3.0) / VOXEL_CM
         largo = np.random.uniform(5, 40) / VOXEL_CM
-        phi = np.random.choice([0.0, np.pi / 2]) if np.random.rand() < 0.5 else np.random.uniform(0, np.pi)
+        phi = phi_comun if paralelas else _azimut()
         inclinacion = np.radians(np.random.uniform(-15, 15)) if np.random.rand() < 0.3 else 0.0
         d = np.array([np.cos(phi) * np.cos(inclinacion), np.sin(phi) * np.cos(inclinacion), np.sin(inclinacion)])
         centro = _random_point(bounds, r)
+        if z_comun is not None:
+            centro[2] = np.clip(z_comun, lo[2] + r, hi[2] - r)
         p1 = np.clip(centro - d * largo / 2, lo + r, hi - r)
         p2 = np.clip(centro + d * largo / 2, lo + r, hi - r)
         gen.add_bar(p1, p2, r)
@@ -444,9 +424,8 @@ def add_void_clusters(gen, bounds, n_clusters):
             gen.add_void(centro + offset, np.random.uniform(0.4, 0.9) * r0)
 
 def build_scene(gen, i):
-    # Distribución (prioridad barras): aire 4%, barras en aire 4%, bloque 8%, malla 32%,
-    # grosores 22%, barras 18%, barras + oclusiones 6%, oclusiones 6%.
-    # 40% de los bloques con barras llevan tubos vacíos de manipulación.
+    # Distribución V17 (prioridad barras): aire 4%, barras en aire 4%, bloque 8%, malla 32%,
+    # barras 40%, barras + oclusiones 6%, oclusiones 6%. Sin fila tipo Grosores ni tubos de PVC.
     opcion = i % 100
     gen.materials['concrete'] = np.random.uniform(*INV_X0_CONCRETO)
     gen.materials['sand'] = np.random.uniform(*INV_X0_ARENA)
@@ -459,28 +438,21 @@ def build_scene(gen, i):
         return 'barras_aire'
     bounds = gen.add_block(center, size, material=material)
     if opcion < 16:
-        escena = 'bloque'
-    elif opcion < 48:
+        return 'bloque'
+    if opcion < 48:
         add_rebar_mesh(gen, bounds)
-        escena = 'malla'
-    elif opcion < 70:
-        add_thickness_row(gen, bounds)
-        escena = 'grosores'
-    elif opcion < 88:
+        return 'malla'
+    if opcion < 88:
         add_isolated_bars(gen, bounds, np.random.randint(1, 7))
-        escena = 'barras'
-    elif opcion < 94:
+        return 'barras'
+    if opcion < 94:
         add_isolated_bars(gen, bounds, np.random.randint(1, 7))
         add_void_clusters(gen, bounds, np.random.randint(1, 4))
         return 'barras_oclusiones'
-    else:
-        add_void_clusters(gen, bounds, np.random.randint(1, 4))
-        return 'oclusiones'
-    if np.random.rand() < 0.4:
-        add_pvc_tubes(gen, bounds)
-    return escena
+    add_void_clusters(gen, bounds, np.random.randint(1, 4))
+    return 'oclusiones'
 
-def generate_deterministic_dataset(num_samples=10000, output_dir="datasets/dataset_muografia_V11", csv_path=None,
+def generate_deterministic_dataset(num_samples=10000, output_dir="datasets/dataset_muografia_V17", csv_path=None,
                                    guardar_ruido=False, semilla=None):
     # Cada muestra guarda la varianza esperada SIN ruido (x_limpio): el ruido se agrega al cargarla.
     # Con guardar_ruido=True (conjunto de prueba) se guarda además una medición fija (x, muones, dias).
@@ -503,8 +475,11 @@ def generate_deterministic_dataset(num_samples=10000, output_dir="datasets/datas
 
         T, T_hierro = gen.simulate_transmission()
 
-        # El detector ve las barras con menos contraste que la proyección ideal (FACTOR_HIERRO)
-        T_detector = T - (1.0 - np.random.uniform(*FACTOR_HIERRO)) * T_hierro
+        # V16: el detector veía las barras con menos contraste (FACTOR_HIERRO); V17 usa el T completo
+        if USAR_FACTOR_HIERRO:
+            T_detector = T - (1.0 - np.random.uniform(*FACTOR_HIERRO)) * T_hierro
+        else:
+            T_detector = T
 
         # El filtro gaussiano simula la PSF del detector de entrada
         detector_psf_sigma = np.random.uniform(*PSF_SIGMA_RANGO_CM) / VOXEL_CM
@@ -525,21 +500,23 @@ def generate_deterministic_dataset(num_samples=10000, output_dir="datasets/datas
         filename = os.path.join(output_dir, f"sample_{i:05d}.npz")
         np.savez_compressed(filename, **datos)
 
-def generate_test_dataset(num_samples=500, output_dir="datasets/dataset_muografia_Test_V13", csv_path=None):
+def generate_test_dataset(num_samples=500, output_dir="datasets/dataset_muografia_Test_V17", csv_path=None):
     generate_deterministic_dataset(num_samples=num_samples, output_dir=output_dir, csv_path=csv_path,
                                    guardar_ruido=True, semilla=12345)
 
 if __name__ == "__main__":
     RUTA_CSV = "Momento_Muones_filtrado.csv"
 
+    # V17: escenas nuevas (sin Grosores ni tubos, sin factor de hierro) -> dataset nuevo con semilla fija
     generate_deterministic_dataset(
         num_samples=10000,
-        output_dir="datasets/dataset_muografia_V11",
-        csv_path=RUTA_CSV
+        output_dir="datasets/dataset_muografia_V17",
+        csv_path=RUTA_CSV,
+        semilla=17
     )
 
     generate_test_dataset(
         num_samples=500,
-        output_dir="datasets/dataset_muografia_Test_V13",
+        output_dir="datasets/dataset_muografia_Test_V17",
         csv_path=RUTA_CSV
     )
